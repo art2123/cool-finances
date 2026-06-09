@@ -55,6 +55,17 @@ ACCOUNT_TYPE_SHORT = {
     AccountType.SAVINGS: "накопления",
 }
 
+ACCOUNT_TYPE_ICONS = {
+    AccountType.DEBIT: "💳",
+    AccountType.CREDIT: "💳",
+    AccountType.CASH: "💵",
+    AccountType.DEBT: "📉",
+    AccountType.SAVINGS: "🐷",
+}
+
+ASSET_ACCOUNT_TYPES = frozenset({AccountType.DEBIT, AccountType.CASH, AccountType.SAVINGS})
+DEBT_ACCOUNT_TYPES = frozenset({AccountType.CREDIT, AccountType.DEBT})
+
 
 def currency_keyboard(callback_prefix: str = "currency") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []

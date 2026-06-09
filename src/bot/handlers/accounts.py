@@ -39,7 +39,7 @@ async def show_accounts_hub(message: Message, session: AsyncSession) -> None:
     if not accounts:
         text = "Счетов пока нет. Добавь первый:"
     else:
-        text = "*Счета:*\n" + balance_service.format_accounts_list(accounts)
+        text = "*Счета:*\n\n" + balance_service.format_accounts_grouped(accounts)
     await message.answer(text, reply_markup=accounts_hub_keyboard(accounts), parse_mode="Markdown")
 
 
@@ -78,7 +78,7 @@ async def cb_acct_add(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_acct_back(callback: CallbackQuery, session: AsyncSession) -> None:
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
     accounts = await account_repo.list_accounts(session, user.id)
-    text = "*Счета:*\n" + balance_service.format_accounts_list(accounts) if accounts else "Счетов пока нет."
+    text = "*Счета:*\n\n" + balance_service.format_accounts_grouped(accounts) if accounts else "Счетов пока нет."
     await callback.message.edit_text(
         text,
         reply_markup=accounts_hub_keyboard(accounts),
@@ -312,7 +312,7 @@ async def cb_deactivate(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer("Счёт не найден", show_alert=True)
         return
     accounts = await account_repo.list_accounts(session, user.id)
-    text = "*Счета:*\n" + balance_service.format_accounts_list(accounts) if accounts else "Счетов пока нет."
+    text = "*Счета:*\n\n" + balance_service.format_accounts_grouped(accounts) if accounts else "Счетов пока нет."
     await callback.message.edit_text(
         text,
         reply_markup=accounts_hub_keyboard(accounts),

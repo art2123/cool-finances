@@ -179,21 +179,8 @@ async def cmd_help(message: Message) -> None:
 async def cmd_balance(message: Message, session: AsyncSession) -> None:
     user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
     accounts = await account_repo.list_accounts(session, user.id)
-    by_currency = await balance_service.get_balances_by_currency(session, user.id)
-    debts = await balance_service.get_debt_totals(session, user.id)
-
-    lines = ["*Балансы по счетам:*", balance_service.format_accounts_list(accounts), ""]
-    if by_currency:
-        lines.append("*Свободные средства:*")
-        for cur, total in by_currency.items():
-            lines.append(f"  {cur}: {balance_service.format_money(total, cur)}")
-    if debts:
-        lines.append("")
-        lines.append("*Долги:*")
-        for cur, total in debts.items():
-            lines.append(f"  {cur}: {balance_service.format_money(total, cur)}")
-
-    await message.answer("\n".join(lines), parse_mode="Markdown")
+    text = "*Баланс*\n\n" + balance_service.format_balance_report(accounts)
+    await message.answer(text, parse_mode="Markdown")
 
 
 @router.message(Command("undo"))
