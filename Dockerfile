@@ -7,10 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+# pyproject.toml уже в репо — не зависим от requirements.txt
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
 
-COPY . .
+COPY alembic ./alembic
+COPY alembic.ini ./
+COPY scripts ./scripts
 RUN chmod +x scripts/entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
