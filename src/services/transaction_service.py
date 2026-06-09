@@ -20,6 +20,7 @@ async def record_expense(
     amount: Decimal,
     currency: str,
     *,
+    actor_user_id: int | None = None,
     settlement_amount: Decimal | None = None,
     settlement_currency: str | None = None,
     category_id: int | None = None,
@@ -51,6 +52,7 @@ async def record_expense(
     tx = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
+        actor_user_id=actor_user_id or user_id,
         type=TransactionType.EXPENSE,
         status=TransactionStatus.CONFIRMED,
         amount=amount,
@@ -77,6 +79,7 @@ async def record_income(
     amount: Decimal,
     currency: str,
     *,
+    actor_user_id: int | None = None,
     description: str | None = None,
     transaction_date: date | None = None,
     source_message_id: int | None = None,
@@ -89,6 +92,7 @@ async def record_income(
     tx = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
+        actor_user_id=actor_user_id or user_id,
         type=TransactionType.INCOME,
         status=TransactionStatus.CONFIRMED,
         amount=amount,
@@ -112,6 +116,7 @@ async def record_conversion(
     amount_out: Decimal,
     amount_in: Decimal,
     *,
+    actor_user_id: int | None = None,
     transaction_date: date | None = None,
     description: str | None = None,
 ):
@@ -126,6 +131,7 @@ async def record_conversion(
     tx = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
+        actor_user_id=actor_user_id or user_id,
         type=TransactionType.CONVERSION,
         status=TransactionStatus.CONFIRMED,
         amount=amount_out,
@@ -151,6 +157,7 @@ async def record_transfer(
     amount: Decimal,
     currency: str,
     *,
+    actor_user_id: int | None = None,
     transaction_date: date | None = None,
     description: str | None = None,
 ):
@@ -164,6 +171,7 @@ async def record_transfer(
     out_tx = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
+        actor_user_id=actor_user_id or user_id,
         type=TransactionType.TRANSFER,
         status=TransactionStatus.CONFIRMED,
         amount=amount,
@@ -204,6 +212,7 @@ async def undo_last_transaction(session: AsyncSession, user_id: int):
     reversal = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
+        actor_user_id=last_tx.actor_user_id or last_tx.user_id,
         type=last_tx.type,
         status=TransactionStatus.CANCELLED,
         amount=last_tx.amount,

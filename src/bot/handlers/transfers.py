@@ -97,11 +97,14 @@ async def xfer_amount(message: Message, state: FSMContext, session: AsyncSession
         return
 
     data = await state.get_data()
-    user = await user_repo.get_or_create_user(session, telegram_id=data.get("telegram_id", message.from_user.id))
+    telegram_id = data.get("telegram_id", message.from_user.id)
+    user, actor = await user_repo.resolve_data_and_actor(session, telegram_id=telegram_id)
     from_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_to"])
 
-    await record_transfer(session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency)
+    await record_transfer(
+        session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency, actor_user_id=actor.id
+    )
     await state.clear()
     await message.answer(
         f"Перевод ✅ {amount} {from_acc.currency}\n"

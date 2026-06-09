@@ -9,7 +9,7 @@ from src.bot.handlers.advisor import handle_classified_intent
 from src.bot.handlers.goals import handle_emergency_fund_text
 from src.bot.handlers.reminders import handle_reminder_intent
 from src.bot.keyboards import (
-    MAIN_MENU_BUTTON_TEXTS,
+    ALL_MENU_BUTTON_TEXTS,
     accounts_keyboard,
     categories_keyboard,
     confirm_keyboard,
@@ -99,7 +99,7 @@ async def start_expense_flow(message: Message, state: FSMContext, session: Async
     )
 
 
-@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(MAIN_MENU_BUTTON_TEXTS))
+@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(ALL_MENU_BUTTON_TEXTS))
 async def handle_free_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
     current = await state.get_state()
     if current:
@@ -246,7 +246,7 @@ async def _continue_draft(message: Message, state: FSMContext, session: AsyncSes
 
 @router.callback_query(ExpenseStates.confirm, F.data == "draft:save")
 async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    user, actor = await user_repo.resolve_data_and_actor(session, telegram_id=callback.from_user.id)
     data = await state.get_data()
     draft = data["draft"]
     amount = Decimal(str(draft["amount"]))
@@ -258,6 +258,7 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
     if tx_type == "income":
         tx, account = await record_income(
             session, user.id, account_id, amount, currency,
+            actor_user_id=actor.id,
             description=draft.get("description"),
             source_message_id=callback.message.message_id,
             raw_input=draft.get("raw_input"),
@@ -270,6 +271,7 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
             account_id,
             amount,
             currency,
+            actor_user_id=actor.id,
             settlement_amount=settlement,
             settlement_currency=draft.get("settlement_currency"),
             category_id=category_id,

@@ -7,6 +7,7 @@ from src.bot.handlers import (
     conversions,
     credits,
     expenses,
+    family,
     goals,
     photos,
     reminders,
@@ -18,6 +19,7 @@ from src.bot.handlers import (
 def setup_routers() -> Router:
     router = Router()
     router.include_router(common.router)
+    router.include_router(family.router)
     router.include_router(accounts.router)
     router.include_router(credits.router)
     router.include_router(advisor.router)

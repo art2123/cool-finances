@@ -32,6 +32,28 @@ async def _apply_schema_patches(conn) -> None:
     await conn.execute(
         text("ALTER TYPE transaction_type ADD VALUE IF NOT EXISTS 'conversion'")
     )
+    await conn.execute(
+        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS family_owner_id INTEGER REFERENCES users(id)")
+    )
+    await conn.execute(
+        text(
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id)"
+        )
+    )
+    await conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS family_invites (
+                id SERIAL PRIMARY KEY,
+                owner_user_id INTEGER NOT NULL REFERENCES users(id),
+                invitee_telegram_id BIGINT NOT NULL,
+                invitee_user_id INTEGER REFERENCES users(id),
+                created_at TIMESTAMPTZ DEFAULT now(),
+                UNIQUE (owner_user_id, invitee_telegram_id)
+            )
+            """
+        )
+    )
 
 
 async def init_db() -> None:

@@ -4,7 +4,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.keyboards import MAIN_MENU_BUTTON_TEXTS, main_menu_keyboard
+from src.bot.keyboards import (
+    ALL_MENU_BUTTON_TEXTS,
+    main_menu_keyboard,
+    more_menu_keyboard,
+)
 from src.repositories import account_repo, category_repo, user_repo
 from src.services import balance_service
 from src.services.transaction_service import undo_last_transaction
@@ -12,30 +16,14 @@ from src.services.transaction_service import undo_last_transaction
 router = Router()
 
 
-@router.message(F.text.in_(MAIN_MENU_BUTTON_TEXTS))
-async def handle_main_menu_button(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    """Кнопки ReplyKeyboard — обрабатываем первыми и сбрасываем FSM."""
-    await state.clear()
-    text = message.text.strip()
-
-    if text == "💰 Баланс":
-        await cmd_balance(message, session)
-    elif text == "💳 Счета":
-        await cmd_accounts(message, session)
-    elif text in {"↩️ Отмена", "⤴️ Отмена"}:
-        await cmd_undo(message, session)
-    elif text == "📊 Отчёт":
+async def _handle_more_menu_button(message: Message, state: FSMContext, session: AsyncSession, text: str) -> None:
+    if text == "◀️ Назад":
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard())
+        return
+    if text == "📊 Отчёт":
         from src.bot.handlers.reports import cmd_report
 
         await cmd_report(message)
-    elif text == "➕ Счёт":
-        from src.bot.handlers.accounts import cmd_add_account
-
-        await cmd_add_account(message, state)
-    elif text == "💸 Перевод":
-        from src.bot.handlers.transfers import cmd_transfer
-
-        await cmd_transfer(message, state, session)
     elif text == "🔄 Конвертация":
         from src.bot.handlers.conversions import cmd_conversion
 
@@ -68,9 +56,58 @@ async def handle_main_menu_button(message: Message, state: FSMContext, session: 
         await cmd_help(message)
 
 
+@router.message(F.text.in_(ALL_MENU_BUTTON_TEXTS))
+async def handle_main_menu_button(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    """Кнопки ReplyKeyboard — обрабатываем первыми и сбрасываем FSM."""
+    await state.clear()
+    text = message.text.strip()
+
+    if text == "📋 Ещё":
+        await message.answer("Дополнительно:", reply_markup=more_menu_keyboard())
+        return
+
+    if text in {
+        "📊 Отчёт",
+        "🔄 Конвертация",
+        "📉 Долги",
+        "📈 Проценты",
+        "🔮 Прогноз",
+        "🔔 Напоминания",
+        "🎯 Цели",
+        "❓ Помощь",
+        "◀️ Назад",
+    }:
+        await _handle_more_menu_button(message, state, session, text)
+        return
+
+    if text == "💰 Баланс":
+        await cmd_balance(message, session)
+    elif text == "💳 Счета":
+        from src.bot.handlers.accounts import show_accounts_hub
+
+        await show_accounts_hub(message, session)
+    elif text in {"↩️ Отмена", "⤴️ Отмена"}:
+        await cmd_undo(message, session)
+    elif text == "➕ Счёт":
+        from src.bot.handlers.accounts import cmd_add_account
+
+        await cmd_add_account(message, state)
+    elif text == "💸 Перевод":
+        from src.bot.handlers.transfers import cmd_transfer
+
+        await cmd_transfer(message, state, session)
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession) -> None:
-    user = await user_repo.get_or_create_user(
+    actor = await user_repo.get_or_create_user(
+        session,
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        resolve_family=False,
+    )
+    owner = await user_repo.get_or_create_user(
         session,
         telegram_id=message.from_user.id,
         username=message.from_user.username,
@@ -78,36 +115,57 @@ async def cmd_start(message: Message, session: AsyncSession) -> None:
     )
     await category_repo.ensure_system_categories(session)
 
+    greeting_name = actor.first_name or "друг"
+    if actor.family_owner_id:
+        owner_name = owner.first_name or owner.username or "основателя"
+        intro = (
+            f"Привет, {greeting_name}! 👋\n\n"
+            f"Вы подключены к семейному бюджету *{owner_name}*.\n"
+            "Счета и операции общие — функционал такой же, как у основателя.\n\n"
+        )
+    else:
+        intro = (
+            f"Привет, {greeting_name}! 👋\n\n"
+            "Я твой финансовый помощник.\n\n"
+            "Семейный доступ: /family_add <telegram_id> — пригласить близких к общему бюджету.\n\n"
+        )
+
     await message.answer(
-        f"Привет, {user.first_name or 'друг'}! 👋\n\n"
-        "Я твой финансовый помощник.\n\n"
-        "Пользуйся кнопками ниже или пиши обычным текстом:\n"
+        intro
+        + "Пользуйся кнопками ниже или пиши обычным текстом:\n"
         "• кофе 200 динар списали 1680 тенге\n"
         "• зарплата 180000\n"
-        "• 🔄 Конвертация — обмен / крипта между счетами\n\n"
-        "Справка — кнопка ❓ Помощь",
+        "• 🔄 Конвертация — в меню «Ещё»\n\n"
+        "Справка — ❓ Помощь в меню «Ещё»",
         reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown" if actor.family_owner_id else None,
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(
-        "*Кнопки меню:*\n"
-        "💰 Баланс · 📊 Отчёт · 💳 Счета · ➕ Счёт\n"
-        "💸 Перевод · 🔄 Конвертация · 📉 Долги · 📈 Проценты\n"
-        "🔮 Прогноз · 🔔 Напоминания · 🎯 Цели · ↩️ Отмена\n\n"
+        "*Главное меню:*\n"
+        "💰 Баланс · 💳 Счета · 💸 Перевод · 📋 Ещё · ↩️ Отмена\n\n"
+        "*Меню «Ещё»:*\n"
+        "📊 Отчёт · 🔄 Конвертация · 📉 Долги · 📈 Проценты\n"
+        "🔮 Прогноз · 🔔 Напоминания · 🎯 Цели · ❓ Помощь\n\n"
+        "*Счета:*\n"
+        "💳 Счета — список, добавление и редактирование (название, валюта, баланс, тип)\n\n"
         "*Трата с иностранной карты:*\n"
         "Покупка в одной валюте, списание в другой.\n"
         "• кофе 200 динар списали 1680 тенге\n"
-        "В отчёте — 200 RSD, с карты — 1680 KZT.\n"
-        "Если сумму списания не знаешь — введи позже или уточни в выписке.\n\n"
+        "В отчёте — 200 RSD, с карты — 1680 KZT.\n\n"
         "*Конвертация (крипта / обмен):*\n"
         "🔄 Конвертация — не трата и не доход.\n"
         "Укажешь сколько ушло и сколько пришло: 5000 RUB → 25000 KZT.\n\n"
         "*Свободный текст:*\n"
         "• зарплата 180000 · что будет, если 50к на visa?\n"
-        "• напомни за 5 дней до 25-го про аренду 35000",
+        "• напомни за 5 дней до 25-го про аренду 35000\n\n"
+        "*Семейный доступ:*\n"
+        "/family — участники семьи\n"
+        "/family_add <telegram_id> — пригласить\n"
+        "/family_remove <telegram_id> — удалить",
         parse_mode="Markdown",
     )
 
@@ -136,13 +194,6 @@ async def cmd_balance(message: Message, session: AsyncSession) -> None:
             lines.append(f"  {cur}: {balance_service.format_money(total, cur)}")
 
     await message.answer("\n".join(lines), parse_mode="Markdown")
-
-
-@router.message(Command("accounts"))
-async def cmd_accounts(message: Message, session: AsyncSession) -> None:
-    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
-    accounts = await account_repo.list_accounts(session, user.id)
-    await message.answer(balance_service.format_accounts_list(accounts))
 
 
 @router.message(Command("undo"))

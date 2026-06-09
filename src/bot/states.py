@@ -8,6 +8,11 @@ class AddAccountStates(StatesGroup):
     account_type = State()
 
 
+class EditAccountStates(StatesGroup):
+    waiting_name = State()
+    waiting_balance = State()
+
+
 class ExpenseStates(StatesGroup):
     waiting_amount = State()
     waiting_currency = State()

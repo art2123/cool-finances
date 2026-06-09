@@ -14,6 +14,7 @@ class Transaction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    actor_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True)
     type: Mapped[TransactionType] = mapped_column(Enum(TransactionType, name="transaction_type"), nullable=False)
     status: Mapped[TransactionStatus] = mapped_column(
         Enum(TransactionStatus, name="transaction_status"),
@@ -42,5 +43,6 @@ class Transaction(Base):
     reversed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("transactions.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    user: Mapped["User"] = relationship(back_populates="transactions")
+    user: Mapped["User"] = relationship(back_populates="transactions", foreign_keys=[user_id])
+    actor: Mapped[Optional["User"]] = relationship(foreign_keys=[actor_user_id])
     account: Mapped["Account"] = relationship(back_populates="transactions", foreign_keys=[account_id])

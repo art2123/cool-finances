@@ -98,12 +98,15 @@ async def conv_amount_in(message: Message, state: FSMContext, session: AsyncSess
         return
 
     data = await state.get_data()
-    user = await user_repo.get_or_create_user(session, telegram_id=data.get("telegram_id", message.from_user.id))
+    telegram_id = data.get("telegram_id", message.from_user.id)
+    user, actor = await user_repo.resolve_data_and_actor(session, telegram_id=telegram_id)
     amount_out = Decimal(str(data["conv_amount_out"]))
     from_acc = await account_repo.get_account_by_id(session, user.id, data["conv_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, data["conv_to"])
 
-    await record_conversion(session, user.id, from_acc.id, to_acc.id, amount_out, amount_in)
+    await record_conversion(
+        session, user.id, from_acc.id, to_acc.id, amount_out, amount_in, actor_user_id=actor.id
+    )
     await state.clear()
     await message.answer(
         f"Конвертация ✅\n"

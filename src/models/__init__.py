@@ -1,4 +1,5 @@
 from src.models.account import Account
+from src.models.family_invite import FamilyInvite
 from src.models.category import Category
 from src.models.category_rule import CategoryRule
 from src.models.conversation import ConversationSession
@@ -16,6 +17,7 @@ __all__ = [
     "CategoryRule",
     "ConversationSession",
     "CreditTerms",
+    "FamilyInvite",
     "FxRate",
     "RecurringPayment",
     "SavingsGoal",

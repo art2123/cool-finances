@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.enums import AccountType
@@ -29,6 +29,36 @@ async def get_account_by_id(session: AsyncSession, user_id: int, account_id: int
         select(Account).where(Account.user_id == user_id, Account.id == account_id)
     )
     return result.scalar_one_or_none()
+
+
+async def count_for_account(session: AsyncSession, account_id: int) -> int:
+    from src.models.transaction import Transaction
+
+    result = await session.execute(
+        select(func.count()).select_from(Transaction).where(Transaction.account_id == account_id)
+    )
+    return result.scalar_one()
+
+
+async def update_account(
+    session: AsyncSession,
+    user_id: int,
+    account_id: int,
+    **fields,
+) -> Account | None:
+    account = await get_account_by_id(session, user_id, account_id)
+    if not account:
+        return None
+    for key, value in fields.items():
+        if hasattr(account, key):
+            setattr(account, key, value)
+    await session.flush()
+    return account
+
+
+async def deactivate_account(session: AsyncSession, user_id: int, account_id: int) -> bool:
+    account = await update_account(session, user_id, account_id, is_active=False)
+    return account is not None
 
 
 async def create_account(
