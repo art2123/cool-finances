@@ -1,9 +1,10 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from aiogram.types import Update
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 
 from src.bot.bot import create_bot, create_dispatcher, create_storage
 from src.core.config import get_settings
@@ -16,6 +17,9 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 bot = None
 dp = None
+
+# Ограничиваем параллельную обработку, чтобы не выбить пул БД и лимиты Telegram.
+_update_semaphore = asyncio.Semaphore(3)
 
 
 @asynccontextmanager
@@ -34,8 +38,12 @@ async def lifespan(app: FastAPI):
         port = settings.app_port
         base = settings.webhook_url.rstrip("/")
         webhook_url = f"{base}/webhook/{settings.bot_token}"
-        await bot.set_webhook(url=webhook_url, secret_token=settings.webhook_secret or None)
-        logger.info("Webhook set: %s", webhook_url)
+        await bot.set_webhook(
+            url=webhook_url,
+            secret_token=settings.webhook_secret or None,
+            drop_pending_updates=True,
+        )
+        logger.info("Webhook set (pending updates dropped): %s", webhook_url)
     else:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("No WEBHOOK_URL — use polling: python -m src.main poll")
@@ -52,10 +60,19 @@ async def health() -> dict:
     return {"status": "ok", "version": "1.5.0"}
 
 
+async def _process_update(update: Update) -> None:
+    async with _update_semaphore:
+        try:
+            await dp.feed_update(bot, update)
+        except Exception:
+            logger.exception("Failed to process Telegram update id=%s", update.update_id)
+
+
 @app.post("/webhook/{token}")
 async def webhook(
     token: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),
 ) -> dict:
     if token != settings.bot_token:
@@ -69,8 +86,9 @@ async def webhook(
     try:
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})
-        await dp.feed_update(bot, update)
     except Exception:
-        logger.exception("Failed to process Telegram update")
+        logger.exception("Failed to parse Telegram update")
         raise
+
+    background_tasks.add_task(_process_update, update)
     return {"ok": True}
