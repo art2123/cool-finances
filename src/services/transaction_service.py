@@ -20,6 +20,8 @@ async def record_expense(
     amount: Decimal,
     currency: str,
     *,
+    settlement_amount: Decimal | None = None,
+    settlement_currency: str | None = None,
     category_id: int | None = None,
     merchant: str | None = None,
     description: str | None = None,
@@ -31,13 +33,30 @@ async def record_expense(
     if not account:
         raise ValueError("Account not found")
 
+    expense_currency = currency.upper()
+    account_currency = account.currency.upper()
+    foreign_purchase = expense_currency != account_currency
+
+    if foreign_purchase:
+        if settlement_amount is None:
+            raise ValueError("Settlement amount required for foreign-currency purchase")
+        debit_amount = settlement_amount
+        debit_currency = (settlement_currency or account_currency).upper()
+        if debit_currency != account_currency:
+            raise ValueError("Settlement currency must match account currency")
+    else:
+        debit_amount = amount
+        debit_currency = expense_currency
+
     tx = await transaction_repo.create_transaction(
         session,
         user_id=user_id,
         type=TransactionType.EXPENSE,
         status=TransactionStatus.CONFIRMED,
         amount=amount,
-        currency=currency.upper(),
+        currency=expense_currency,
+        counter_amount=settlement_amount if foreign_purchase else None,
+        counter_currency=debit_currency if foreign_purchase else None,
         account_id=account_id,
         category_id=category_id,
         merchant=merchant,
@@ -47,7 +66,7 @@ async def record_expense(
         source_type="text",
         raw_input=raw_input,
     )
-    apply_transaction_to_account(account, "expense", amount)
+    apply_transaction_to_account(account, "expense", debit_amount)
     return tx, account
 
 
@@ -83,6 +102,45 @@ async def record_income(
     )
     apply_transaction_to_account(account, "income", amount)
     return tx, account
+
+
+async def record_conversion(
+    session: AsyncSession,
+    user_id: int,
+    from_account_id: int,
+    to_account_id: int,
+    amount_out: Decimal,
+    amount_in: Decimal,
+    *,
+    transaction_date: date | None = None,
+    description: str | None = None,
+):
+    """Обмен валют / крипта: ушло amount_out с одного счёта, пришло amount_in на другой."""
+    from_acc = await account_repo.get_account_by_id(session, user_id, from_account_id)
+    to_acc = await account_repo.get_account_by_id(session, user_id, to_account_id)
+    if not from_acc or not to_acc:
+        raise ValueError("Account not found")
+    if from_acc.currency == to_acc.currency:
+        raise ValueError("Use transfer for same-currency moves")
+
+    tx = await transaction_repo.create_transaction(
+        session,
+        user_id=user_id,
+        type=TransactionType.CONVERSION,
+        status=TransactionStatus.CONFIRMED,
+        amount=amount_out,
+        currency=from_acc.currency.upper(),
+        counter_amount=amount_in,
+        counter_currency=to_acc.currency.upper(),
+        account_id=from_account_id,
+        counter_account_id=to_account_id,
+        description=description or f"Конвертация → {to_acc.name}",
+        transaction_date=transaction_date or date.today(),
+        source_type="conversion",
+    )
+    apply_transaction_to_account(from_acc, "transfer_out", amount_out)
+    apply_transaction_to_account(to_acc, "transfer_in", amount_in)
+    return tx, from_acc, to_acc
 
 
 async def record_transfer(
@@ -131,15 +189,17 @@ async def undo_last_transaction(session: AsyncSession, user_id: int):
         raise ValueError("Account not found")
 
     if last_tx.type == TransactionType.EXPENSE:
-        apply_transaction_to_account(account, "undo_expense", last_tx.amount)
+        undo_amount = last_tx.counter_amount or last_tx.amount
+        apply_transaction_to_account(account, "undo_expense", undo_amount)
     elif last_tx.type == TransactionType.INCOME:
         apply_transaction_to_account(account, "undo_income", last_tx.amount)
-    elif last_tx.type == TransactionType.TRANSFER:
+    elif last_tx.type in (TransactionType.TRANSFER, TransactionType.CONVERSION):
         apply_transaction_to_account(account, "transfer_in", last_tx.amount)
         if last_tx.counter_account_id:
             counter = await account_repo.get_account_by_id(session, user_id, last_tx.counter_account_id)
             if counter:
-                apply_transaction_to_account(counter, "transfer_out", last_tx.amount)
+                counter_amount = last_tx.counter_amount or last_tx.amount
+                apply_transaction_to_account(counter, "transfer_out", counter_amount)
 
     reversal = await transaction_repo.create_transaction(
         session,
@@ -196,6 +256,14 @@ async def pick_default_account(
     return None
 
 
+def needs_settlement(draft: ExpenseDraft, account: Account | None) -> bool:
+    if not account or not draft.currency or not draft.amount:
+        return False
+    if draft.transaction_type != TransactionType.EXPENSE:
+        return False
+    return draft.currency.upper() != account.currency.upper() and draft.settlement_amount is None
+
+
 def draft_missing_fields(draft: ExpenseDraft, account: Account | None) -> list[str]:
     missing = []
     if not draft.amount:
@@ -204,6 +272,8 @@ def draft_missing_fields(draft: ExpenseDraft, account: Account | None) -> list[s
         missing.append("currency")
     if not account:
         missing.append("account")
+    if needs_settlement(draft, account):
+        missing.append("settlement")
     if draft.transaction_type == TransactionType.EXPENSE and not draft.category_slug:
         missing.append("category")
     return missing

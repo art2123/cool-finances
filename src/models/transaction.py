@@ -23,6 +23,9 @@ class Transaction(Base):
 
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(Text, nullable=False)
+    # Фактическое движение по счёту / вторая сторона конвертации
+    counter_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 2))
+    counter_currency: Mapped[Optional[str]] = mapped_column(Text)
 
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     counter_account_id: Mapped[Optional[int]] = mapped_column(ForeignKey("accounts.id"))

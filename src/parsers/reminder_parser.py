@@ -32,7 +32,7 @@ def parse_reminder_text(text: str) -> ReminderDraft:
         draft.day_of_month = int(day_match.group(1))
         draft.recurrence = ReminderRecurrence.MONTHLY
 
-    amount_match = re.search(r"(\d[\d\s]*)\s*(?:динар|rsd|евро|eur)?", lower)
+    amount_match = re.search(r"(\d[\d\s]*)\s*(?:динар|rsd|евро|eur|рубл|rub|тенге|kzt)?", lower)
     if amount_match:
         draft.amount = Decimal(amount_match.group(1).replace(" ", ""))
 
@@ -50,6 +50,10 @@ def parse_reminder_text(text: str) -> ReminderDraft:
         draft.currency = "RSD"
     elif "eur" in lower or "евро" in lower:
         draft.currency = "EUR"
+    elif "rub" in lower or "рубл" in lower or "₽" in lower:
+        draft.currency = "RUB"
+    elif "kzt" in lower or "тенге" in lower or "₸" in lower:
+        draft.currency = "KZT"
 
     return draft
 

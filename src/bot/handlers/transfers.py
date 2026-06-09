@@ -10,7 +10,6 @@ from src.bot.keyboards import accounts_keyboard
 from src.bot.states import TransferStates
 from src.repositories import account_repo, fx_repo, user_repo
 from src.services import balance_service
-from src.services.fx_service import convert
 from src.services.transaction_service import record_transfer
 
 router = Router()
@@ -24,7 +23,12 @@ async def cmd_transfer(message: Message, state: FSMContext, session: AsyncSessio
         await message.answer("Нужно минимум 2 счёта. Нажми ➕ Счёт")
         return
     await state.update_data(transfer_flow=True, telegram_id=message.from_user.id)
-    await message.answer("С какого счёта перевести?", reply_markup=accounts_keyboard(accounts, "xfer_from"))
+    await message.answer(
+        "Перевод в одной валюте между своими счетами.\n"
+        "Для обмена валют / крипты — кнопка 🔄 Конвертация.\n\n"
+        "С какого счёта перевести?",
+        reply_markup=accounts_keyboard(accounts, "xfer_from"),
+    )
 
 
 @router.message(Command("set_rate"))
@@ -48,19 +52,36 @@ async def xfer_from(callback: CallbackQuery, state: FSMContext, session: AsyncSe
         return
     from_id = int(callback.data.split(":")[1])
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    from_acc = await account_repo.get_account_by_id(session, user.id, from_id)
     accounts = [a for a in await account_repo.list_accounts(session, user.id) if a.id != from_id]
     await state.update_data(xfer_from=from_id)
-    await callback.message.edit_text("На какой счёт?")
+    await callback.message.edit_text(
+        f"С: {from_acc.name} ({from_acc.currency})\n\n"
+        "На какой счёт? (другая валюта → 🔄 Конвертация)"
+    )
     await callback.message.answer("Выбери:", reply_markup=accounts_keyboard(accounts, "xfer_to"))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("xfer_to:"))
-async def xfer_to(callback: CallbackQuery, state: FSMContext) -> None:
+async def xfer_to(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     if not data.get("transfer_flow"):
         return
     to_id = int(callback.data.split(":")[1])
+    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    from_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_from"])
+    to_acc = await account_repo.get_account_by_id(session, user.id, to_id)
+
+    if from_acc.currency != to_acc.currency:
+        await callback.message.edit_text(
+            f"Счета в разных валютах ({from_acc.currency} → {to_acc.currency}).\n"
+            "Для обмена нажми 🔄 Конвертация — укажешь сколько ушло и сколько пришло."
+        )
+        await state.clear()
+        await callback.answer()
+        return
+
     await state.update_data(xfer_to=to_id)
     await state.set_state(TransferStates.waiting_amount)
     await callback.message.edit_text("Сумма перевода?")
@@ -80,36 +101,10 @@ async def xfer_amount(message: Message, state: FSMContext, session: AsyncSession
     from_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_to"])
 
-    if from_acc.currency != to_acc.currency:
-        converted = await convert(session, amount, from_acc.currency, to_acc.currency)
-        if not converted:
-            await message.answer(
-                f"Нужен курс {from_acc.currency}→{to_acc.currency}.\n"
-                f"/set_rate {from_acc.currency} {to_acc.currency} 117.5"
-            )
-            await state.clear()
-            return
-        from src.services.balance_service import apply_transaction_to_account
-        from src.repositories import transaction_repo
-        from src.domain.enums import TransactionType, TransactionStatus
-        from datetime import date
-        await transaction_repo.create_transaction(
-            session, user_id=user.id, type=TransactionType.TRANSFER, status=TransactionStatus.CONFIRMED,
-            amount=amount, currency=from_acc.currency, account_id=from_acc.id, counter_account_id=to_acc.id,
-            description=f"→ {to_acc.name} ({converted} {to_acc.currency})", transaction_date=date.today(),
-        )
-        apply_transaction_to_account(from_acc, "transfer_out", amount)
-        apply_transaction_to_account(to_acc, "transfer_in", converted)
-        await message.answer(
-            f"Перевод ✅\n{amount} {from_acc.currency} → {converted} {to_acc.currency}\n"
-            f"{from_acc.name}: {balance_service.format_money(from_acc.balance, from_acc.currency)}\n"
-            f"{to_acc.name}: {balance_service.format_money(to_acc.balance, to_acc.currency)}"
-        )
-    else:
-        await record_transfer(session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency)
-        await message.answer(
-            f"Перевод ✅ {amount} {from_acc.currency}\n"
-            f"{from_acc.name}: {balance_service.format_money(from_acc.balance, from_acc.currency)}\n"
-            f"{to_acc.name}: {balance_service.format_money(to_acc.balance, to_acc.currency)}"
-        )
+    await record_transfer(session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency)
     await state.clear()
+    await message.answer(
+        f"Перевод ✅ {amount} {from_acc.currency}\n"
+        f"{from_acc.name}: {balance_service.format_money(from_acc.balance, from_acc.currency)}\n"
+        f"{to_acc.name}: {balance_service.format_money(to_acc.balance, to_acc.currency)}"
+    )

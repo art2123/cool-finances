@@ -12,6 +12,7 @@ class ExpenseStates(StatesGroup):
     waiting_amount = State()
     waiting_currency = State()
     waiting_account = State()
+    waiting_settlement = State()
     waiting_category = State()
     confirm = State()
 
@@ -23,3 +24,8 @@ class CreditTermsStates(StatesGroup):
 
 class TransferStates(StatesGroup):
     waiting_amount = State()
+
+
+class ConversionStates(StatesGroup):
+    waiting_amount_out = State()
+    waiting_amount_in = State()

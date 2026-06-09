@@ -37,7 +37,10 @@ def format_draft_preview(draft: dict, account_name: str = None) -> str:
     lines = ["*Черновик операции:*"]
     lines.append(f"Тип: {draft.get('transaction_type', 'expense')}")
     if draft.get("amount"):
-        lines.append(f"Сумма: {draft['amount']} {draft.get('currency', '?')}")
+        lines.append(f"Покупка: {draft['amount']} {draft.get('currency', '?')}")
+    if draft.get("settlement_amount"):
+        cur = draft.get("settlement_currency") or "?"
+        lines.append(f"Списание с карты: {draft['settlement_amount']} {cur}")
     if draft.get("merchant"):
         lines.append(f"Место: {draft['merchant']}")
     if draft.get("category_slug"):
@@ -74,6 +77,13 @@ async def start_expense_flow(message: Message, state: FSMContext, session: Async
         accounts = await account_repo.list_accounts(session, user.id)
         await state.set_state(ExpenseStates.waiting_account)
         await message.answer("С какого счёта?", reply_markup=accounts_keyboard(accounts))
+        return
+    if "settlement" in missing and account:
+        await state.set_state(ExpenseStates.waiting_settlement)
+        await message.answer(
+            f"Покупка в {draft.currency}, карта {account.currency}.\n"
+            f"Сколько списалось с карты? (в {account.currency})"
+        )
         return
     if "category" in missing and draft.transaction_type == TransactionType.EXPENSE:
         categories = await category_repo.list_categories(session)
@@ -156,6 +166,23 @@ async def process_draft_account(callback: CallbackQuery, state: FSMContext, sess
     await _continue_draft(callback.message, state, session)
 
 
+@router.message(ExpenseStates.waiting_settlement)
+async def process_settlement(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        amount = Decimal(message.text.replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        await message.answer("Введи число — сколько списалось с карты")
+        return
+    data = await state.get_data()
+    draft = data["draft"]
+    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
+    account = await account_repo.get_account_by_id(session, user.id, draft["account_id"])
+    draft["settlement_amount"] = str(amount)
+    draft["settlement_currency"] = account.currency if account else draft.get("settlement_currency")
+    await state.update_data(draft=draft)
+    await _continue_draft(message, state, session)
+
+
 @router.callback_query(ExpenseStates.waiting_category, F.data.startswith("category:"))
 async def process_draft_category(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     slug = callback.data.split(":")[1]
@@ -190,6 +217,13 @@ async def _continue_draft(message: Message, state: FSMContext, session: AsyncSes
         accounts = await account_repo.list_accounts(session, user.id)
         await state.set_state(ExpenseStates.waiting_account)
         await message.answer("С какого счёта?", reply_markup=accounts_keyboard(accounts))
+        return
+    if "settlement" in missing and account:
+        await state.set_state(ExpenseStates.waiting_settlement)
+        await message.answer(
+            f"Покупка в {draft.currency}, карта {account.currency}.\n"
+            f"Сколько списалось с карты? (в {account.currency})"
+        )
         return
     if "category" in missing and draft.transaction_type == TransactionType.EXPENSE:
         categories = await category_repo.list_categories(session)
@@ -229,19 +263,28 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
             raw_input=draft.get("raw_input"),
         )
     else:
+        settlement = Decimal(str(draft["settlement_amount"])) if draft.get("settlement_amount") else None
         tx, account = await record_expense(
-            session, user.id, account_id, amount, currency,
-            category_id=category_id, merchant=draft.get("merchant"),
+            session,
+            user.id,
+            account_id,
+            amount,
+            currency,
+            settlement_amount=settlement,
+            settlement_currency=draft.get("settlement_currency"),
+            category_id=category_id,
+            merchant=draft.get("merchant"),
             description=draft.get("description"),
             source_message_id=callback.message.message_id,
             raw_input=draft.get("raw_input"),
         )
 
     await state.clear()
-    await callback.message.edit_text(
-        f"Записал ✅ #{tx.id}\n"
-        f"Баланс {account.name}: {balance_service.format_money(account.balance, account.currency)}"
-    )
+    saved_line = f"Записал ✅ #{tx.id}"
+    if tx.counter_amount:
+        saved_line += f"\nВ отчёте: {tx.amount} {tx.currency}, с карты: {tx.counter_amount} {tx.counter_currency}"
+    saved_line += f"\nБаланс {account.name}: {balance_service.format_money(account.balance, account.currency)}"
+    await callback.message.edit_text(saved_line)
     await callback.answer()
 
 

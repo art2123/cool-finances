@@ -7,6 +7,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from src.core.config import get_settings
+from src.domain.currencies import CURRENCY_PROMPT_CHOICES
 
 router = Router()
 
@@ -29,7 +30,11 @@ async def handle_photo(message: Message) -> None:
     content = downloaded.read()
     b64 = base64.b64encode(content).decode()
 
-    prompt = 'Extract from receipt/screenshot. Return JSON: {"amount": number, "currency": "RSD"|"EUR"|"USD", "merchant": string, "confidence": 0-1}'
+    prompt = (
+        'Extract from receipt/screenshot. Return JSON: '
+        f'{{"amount": number, "currency": "{CURRENCY_PROMPT_CHOICES}", '
+        '"merchant": string, "confidence": 0-1}}'
+    )
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(

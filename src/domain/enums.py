@@ -13,6 +13,7 @@ class TransactionType(str, enum.Enum):
     EXPENSE = "expense"
     INCOME = "income"
     TRANSFER = "transfer"
+    CONVERSION = "conversion"
     DEBT_PAYMENT = "debt_payment"
     FX_FEE = "fx_fee"
 

@@ -8,14 +8,9 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from src.core.config import get_settings
+from src.domain.currencies import CURRENCY_PATTERNS, CURRENCY_PROMPT_CHOICES
 from src.domain.enums import TransactionType
 from src.domain.schemas import ExpenseDraft
-
-CURRENCY_PATTERNS = {
-    "RSD": r"динар|rsd|дин",
-    "EUR": r"евро|eur|€|euro",
-    "USD": r"долл|usd|\$|dollar",
-}
 
 CATEGORY_KEYWORDS = {
     "cafe": ["кофе", "кафе", "coffee", "латте", "капучино"],
@@ -44,9 +39,25 @@ def _detect_category(text: str) -> str | None:
     return None
 
 
+_SETTLEMENT_SPLIT = re.compile(
+    r"(?:списал[оаи]?|с\s+карты?|карт[аой])\s+",
+    re.IGNORECASE,
+)
+
+
+def _extract_settlement(text: str) -> tuple[Decimal | None, str | None]:
+    match = _SETTLEMENT_SPLIT.search(text)
+    if not match:
+        return None, None
+    tail = text[match.end() :]
+    amount = _extract_amount(tail)
+    currency = _detect_currency(tail)
+    return amount, currency
+
+
 def _extract_amount(text: str) -> Decimal | None:
     patterns = [
-        r"(\d[\d\s]*(?:[.,]\d{1,2})?)\s*(?:динар|rsd|евро|eur|usd|\$|€)?",
+        r"(\d[\d\s]*(?:[.,]\d{1,2})?)\s*(?:динар|rsd|евро|eur|usd|\$|€|рубл|rub|₽|тенге|kzt|₸)?",
         r"(?:на|за)\s+(\d[\d\s]*(?:[.,]\d{1,2})?)",
     ]
     for pattern in patterns:
@@ -66,14 +77,17 @@ def _is_income(text: str) -> bool:
 
 
 def parse_expense_regex(text: str) -> ExpenseDraft:
-    amount = _extract_amount(text)
-    currency = _detect_currency(text) or ("RSD" if amount else None)
-    category = _detect_category(text)
+    settlement_amount, settlement_currency = _extract_settlement(text)
+    main_text = _SETTLEMENT_SPLIT.split(text, maxsplit=1)[0] if settlement_amount else text
+
+    amount = _extract_amount(main_text)
+    currency = _detect_currency(main_text) or ("RSD" if amount else None)
+    category = _detect_category(main_text)
     tx_type = TransactionType.INCOME if _is_income(text) else TransactionType.EXPENSE
 
     merchant = None
     if amount:
-        cleaned = re.sub(r"\d[\d\s.,]*", "", text, count=1)
+        cleaned = re.sub(r"\d[\d\s.,]*", "", main_text, count=1)
         for pattern in CURRENCY_PATTERNS.values():
             cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
         merchant = cleaned.strip(" -–—,.") or None
@@ -81,6 +95,8 @@ def parse_expense_regex(text: str) -> ExpenseDraft:
     return ExpenseDraft(
         amount=amount,
         currency=currency,
+        settlement_amount=settlement_amount,
+        settlement_currency=settlement_currency,
         merchant=merchant,
         category_slug=category,
         transaction_type=tx_type,
@@ -100,7 +116,7 @@ async def parse_expense_text(text: str) -> ExpenseDraft:
     prompt = f"""Extract expense from user message. Return JSON only:
 {{
   "amount": number or null,
-  "currency": "RSD"|"EUR"|"USD" or null,
+  "currency": "{CURRENCY_PROMPT_CHOICES}" or null,
   "merchant": string or null,
   "category_slug": one of food,cafe,delivery,transport,housing,telecom,subscriptions,health,clothing,travel,business,debt_payment,other or null,
   "transaction_type": "expense"|"income"|"transfer",

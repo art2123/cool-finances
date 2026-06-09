@@ -10,6 +10,8 @@ from src.domain.enums import AccountType, TransactionType
 class ExpenseDraft(BaseModel):
     amount: Optional[Decimal] = None
     currency: Optional[str] = None
+    settlement_amount: Optional[Decimal] = None
+    settlement_currency: Optional[str] = None
     merchant: Optional[str] = None
     description: Optional[str] = None
     category_slug: Optional[str] = None
