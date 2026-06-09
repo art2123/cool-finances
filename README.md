@@ -51,6 +51,9 @@ python -m src.main worker        # напоминания
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` |
 | `OPENAI_API_KEY` | опционально |
 
+**Обязательно:** `REDIS_URL` должен ссылаться на Redis-плагин, не оставляй дефолт `localhost:6379`.
+В Railway → сервис → Variables → `REDIS_URL` = `${{Redis.REDIS_URL}}` (имя сервиса Redis может отличаться — смотри в Reference).
+
 **Важно:** Railway выдаёт `DATABASE_URL` как `postgresql://...` — в Variables замени на:
 ```
 postgresql+asyncpg://user:pass@host:port/db
@@ -64,7 +67,7 @@ uvicorn src.api.app:app --host 0.0.0.0 --port $PORT
 ### 3. Сервис `worker` (напоминания)
 
 - Duplicate service или New Service из того же репо
-- Те же env vars
+- Те же env vars, **включая `REDIS_URL=${{Redis.REDIS_URL}}`**
 - Start command: `python -m src.main worker`
 - Или используй `railway.worker.toml`
 

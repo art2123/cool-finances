@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -32,7 +34,23 @@ class Settings(BaseSettings):
     def use_webhook(self) -> bool:
         return bool(self.webhook_url)
 
+    @property
+    def redis_is_local(self) -> bool:
+        return "localhost" in self.redis_url or "127.0.0.1" in self.redis_url
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_production_config(settings: Settings | None = None) -> None:
+    """Fail fast with an actionable message when Railway env is misconfigured."""
+    settings = settings or get_settings()
+    if settings.use_webhook and settings.redis_is_local:
+        raise RuntimeError(
+            "REDIS_URL points to localhost, but WEBHOOK_URL is set. "
+            "Redis is required for bot FSM state in webhook mode. "
+            "In Railway Variables set REDIS_URL=${{Redis.REDIS_URL}} "
+            "on both web and worker services (Redis plugin must be added to the project)."
+        )

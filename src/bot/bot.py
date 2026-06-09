@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -10,7 +11,7 @@ from redis.asyncio import Redis
 
 from src.bot.handlers import setup_routers
 from src.bot.middlewares import DbSessionMiddleware
-from src.core.config import get_settings
+from src.core.config import get_settings, validate_production_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +26,32 @@ def create_bot() -> Bot:
 
 async def create_storage():
     settings = get_settings()
-    try:
-        redis = Redis.from_url(settings.redis_url)
-        await redis.ping()
-        return RedisStorage(redis)
-    except Exception:
-        if settings.use_webhook:
-            logger.exception("Redis required for webhook FSM; falling back breaks multi-step flows")
-            raise
-        logger.warning("Redis unavailable — using in-memory FSM (local dev only)")
-        return MemoryStorage()
+    validate_production_config(settings)
+
+    last_error: Exception | None = None
+    for attempt in range(1, 6):
+        try:
+            redis = Redis.from_url(settings.redis_url)
+            await redis.ping()
+            if attempt > 1:
+                logger.info("Redis connected on attempt %s", attempt)
+            return RedisStorage(redis)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 5:
+                logger.warning("Redis not ready (attempt %s/5): %s", attempt, exc)
+                await asyncio.sleep(2)
+
+    if settings.use_webhook:
+        logger.exception("Redis required for webhook FSM")
+        raise RuntimeError(
+            f"Cannot connect to Redis at {settings.redis_url!r}. "
+            "Set REDIS_URL=${{Redis.REDIS_URL}} in Railway Variables "
+            "(web and worker services)."
+        ) from last_error
+
+    logger.warning("Redis unavailable — using in-memory FSM (local dev only)")
+    return MemoryStorage()
 
 
 def create_dispatcher(storage=None) -> Dispatcher:
