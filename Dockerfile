@@ -7,14 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
-COPY src ./src
-COPY alembic ./alembic
-COPY alembic.ini ./
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir -e .
+COPY . .
+RUN chmod +x scripts/entrypoint.sh
+
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+ENV RUN_MODE=web
 
 EXPOSE 8000
 
-ENV PORT=8000
-CMD uvicorn src.api.app:app --host 0.0.0.0 --port ${PORT}
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]

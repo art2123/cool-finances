@@ -26,8 +26,16 @@ async def run_polling() -> None:
 
 def run_worker() -> None:
     from arq import run_worker
+
+    from src.core.config import get_settings
     from src.workers.reminder_worker import WorkerSettings
 
+    token = get_settings().bot_token
+    if not token or ":" not in token:
+        logger.error("BOT_TOKEN is missing or invalid. Set it in Railway Variables for the worker service.")
+        sys.exit(1)
+
+    logger.info("Starting ARQ worker...")
     run_worker(WorkerSettings)
 
 

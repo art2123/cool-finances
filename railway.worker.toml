@@ -3,6 +3,6 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Worker — не веб-сервер, healthcheck отключён (нет /health)
-startCommand = "python -m src.main worker"
+# Worker: без healthcheck, без uvicorn. RUN_MODE=worker задаётся в Variables.
+startCommand = ""
 restartPolicyType = "ON_FAILURE"
