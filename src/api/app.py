@@ -66,7 +66,11 @@ async def webhook(
     if bot is None or dp is None:
         raise HTTPException(status_code=503, detail="Bot not ready")
 
-    data = await request.json()
-    update = Update.model_validate(data, context={"bot": bot})
-    await dp.feed_update(bot, update)
+    try:
+        data = await request.json()
+        update = Update.model_validate(data, context={"bot": bot})
+        await dp.feed_update(bot, update)
+    except Exception:
+        logger.exception("Failed to process Telegram update")
+        raise
     return {"ok": True}

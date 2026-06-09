@@ -54,7 +54,7 @@ async def cmd_credit_terms(message: Message, state: FSMContext, session: AsyncSe
         if a.account_type in (AccountType.CREDIT, AccountType.DEBT)
     ]
     if not accounts:
-        await message.answer("Нет кредитных счетов. Сначала /add_account (тип: кредитка или долг)")
+        await message.answer("Нет кредитных счетов. Нажми ➕ Счёт и выбери тип «кредитка» или «долг»")
         return
     await message.answer("Для какого счёта задать условия?", reply_markup=accounts_keyboard(accounts, "credit_acct"))
 

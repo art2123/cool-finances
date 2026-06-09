@@ -40,7 +40,7 @@ async def handle_classified_intent(
             return True
         debt_accounts = [a for a in accounts if a.account_type in (AccountType.CREDIT, AccountType.DEBT)]
         if not debt_accounts:
-            await message.answer("Нет долговых счетов. Добавь кредитку: /add_account")
+            await message.answer("Нет долговых счетов. Нажми ➕ Счёт и добавь кредитку")
             return True
         target = debt_accounts[0]
         for a in debt_accounts:

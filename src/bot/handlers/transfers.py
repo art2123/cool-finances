@@ -21,7 +21,7 @@ async def cmd_transfer(message: Message, state: FSMContext, session: AsyncSessio
     user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
     accounts = await account_repo.list_accounts(session, user.id)
     if len(accounts) < 2:
-        await message.answer("Нужно минимум 2 счёта. /add_account")
+        await message.answer("Нужно минимум 2 счёта. Нажми ➕ Счёт")
         return
     await state.update_data(transfer_flow=True, telegram_id=message.from_user.id)
     await message.answer("С какого счёта перевести?", reply_markup=accounts_keyboard(accounts, "xfer_from"))

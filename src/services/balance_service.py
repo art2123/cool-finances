@@ -61,7 +61,7 @@ def apply_transaction_to_account(account: Account, tx_type: str, amount: Decimal
 
 def format_accounts_list(accounts: list[Account]) -> str:
     if not accounts:
-        return "Счетов пока нет. Добавь: /add_account"
+        return "Счетов пока нет. Нажми ➕ Счёт"
     lines = []
     for acc in accounts:
         type_label = {

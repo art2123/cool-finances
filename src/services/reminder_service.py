@@ -72,7 +72,7 @@ def advance_reminder(reminder: UserReminder) -> None:
 
 def format_reminders_list(reminders: list) -> str:
     if not reminders:
-        return "Напоминаний нет. Создай: /remind"
+        return "Напоминаний нет. Напиши: «напомни за 5 дней до 25-го про аренду 35000»"
     lines = ["*Напоминания:*"]
     for r in reminders:
         status = "✅" if r.is_active else "⏸"

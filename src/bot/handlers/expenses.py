@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.bot.handlers.advisor import handle_classified_intent
 from src.bot.handlers.goals import handle_emergency_fund_text
 from src.bot.handlers.reminders import handle_reminder_intent
-from src.bot.keyboards import accounts_keyboard, categories_keyboard, confirm_keyboard, currency_keyboard
+from src.bot.keyboards import (
+    MAIN_MENU_BUTTON_TEXTS,
+    accounts_keyboard,
+    categories_keyboard,
+    confirm_keyboard,
+    currency_keyboard,
+)
 from src.bot.states import ExpenseStates
 from src.domain.enums import TransactionType, UserIntent
 from src.parsers.intent_classifier import classify_intent
@@ -83,11 +89,8 @@ async def start_expense_flow(message: Message, state: FSMContext, session: Async
     )
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(MAIN_MENU_BUTTON_TEXTS))
 async def handle_free_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if message.text.strip() in {"💰 Баланс", "📊 Отчёт", "💳 Счета", "↩️ Отмена"}:
-        return
-
     current = await state.get_state()
     if current:
         return

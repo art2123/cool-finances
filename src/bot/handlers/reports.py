@@ -24,7 +24,6 @@ def report_keyboard() -> InlineKeyboardMarkup:
 
 
 @router.message(Command("report"))
-@router.message(lambda m: m.text and m.text.strip() == "📊 Отчёт")
 async def cmd_report(message: Message) -> None:
     await message.answer("Расходы за какой период?", reply_markup=report_keyboard())
 

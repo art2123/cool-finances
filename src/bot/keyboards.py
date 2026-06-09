@@ -6,6 +6,23 @@ from src.models.category import Category
 
 CURRENCIES = ["RSD", "EUR", "USD"]
 
+# Тексты кнопок главного меню (ReplyKeyboard). Включены варианты для старых клавиатур.
+MAIN_MENU_BUTTON_TEXTS = (
+    "💰 Баланс",
+    "📊 Отчёт",
+    "💳 Счета",
+    "➕ Счёт",
+    "💸 Перевод",
+    "📉 Долги",
+    "📈 Проценты",
+    "🔮 Прогноз",
+    "🔔 Напоминания",
+    "🎯 Цели",
+    "↩️ Отмена",
+    "⤴️ Отмена",
+    "❓ Помощь",
+)
+
 ACCOUNT_TYPE_LABELS = {
     AccountType.DEBIT: "Дебетовая карта",
     AccountType.CREDIT: "Кредитная карта",
@@ -67,7 +84,11 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📊 Отчёт")],
-            [KeyboardButton(text="💳 Счета"), KeyboardButton(text="↩️ Отмена")],
+            [KeyboardButton(text="💳 Счета"), KeyboardButton(text="➕ Счёт")],
+            [KeyboardButton(text="💸 Перевод"), KeyboardButton(text="📉 Долги")],
+            [KeyboardButton(text="📈 Проценты"), KeyboardButton(text="🔮 Прогноз")],
+            [KeyboardButton(text="🔔 Напоминания"), KeyboardButton(text="🎯 Цели")],
+            [KeyboardButton(text="↩️ Отмена"), KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
     )
