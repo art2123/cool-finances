@@ -1,10 +1,14 @@
+import logging
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.bot.keyboards import (
     ACCOUNT_TYPE_SHORT,
@@ -103,11 +107,11 @@ async def process_account_name(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(AddAccountStates.currency, F.data.startswith("currency:"))
 async def process_account_currency(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
     currency = callback.data.split(":")[1]
     await state.update_data(currency=currency)
     await state.set_state(AddAccountStates.balance)
     await callback.message.edit_text(f"Валюта: {currency}\n\nТекущий баланс? (0 если не знаешь)")
-    await callback.answer()
 
 
 @router.message(AddAccountStates.balance)
@@ -124,24 +128,64 @@ async def process_account_balance(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(AddAccountStates.account_type, F.data.startswith("acct_type:"))
 async def process_account_type(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    account_type = AccountType(callback.data.split(":")[1])
-    data = await state.get_data()
-    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    await callback.answer()
+    try:
+        account_type = AccountType(callback.data.split(":")[1])
+    except ValueError:
+        await callback.message.answer("Неизвестный тип счёта. Начни добавление заново: ➕ Добавить счёт")
+        await state.clear()
+        return
 
-    account = await account_repo.create_account(
-        session,
-        user_id=user.id,
-        name=data["name"],
-        currency=data["currency"],
-        balance=data["balance"],
-        account_type=account_type,
-    )
+    data = await state.get_data()
+    name = data.get("name")
+    currency = data.get("currency")
+    balance = data.get("balance")
+    if not name or not currency or balance is None:
+        await callback.message.answer("Данные устарели. Начни добавление счёта заново: ➕ Добавить счёт")
+        await state.clear()
+        return
+
+    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    existing = await account_repo.get_account_by_name(session, user.id, name)
+    if existing:
+        await callback.message.answer(f"Счёт «{name}» уже есть. Выбери другое название.")
+        await state.set_state(AddAccountStates.name)
+        return
+
+    try:
+        account = await account_repo.create_account(
+            session,
+            user_id=user.id,
+            name=name,
+            currency=currency,
+            balance=Decimal(str(balance)),
+            account_type=account_type,
+        )
+    except IntegrityError:
+        await callback.message.answer(f"Счёт «{name}» уже существует. Выбери другое название.")
+        await state.set_state(AddAccountStates.name)
+        return
+    except Exception:
+        logger.exception("Failed to create account for user %s", user.id)
+        await callback.message.answer("Не удалось создать счёт. Попробуй ещё раз.")
+        return
+
     await state.clear()
-    await callback.message.edit_text(
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
         f"Счёт добавлен ✅\n"
         f"{account.name}: {balance_service.format_money(account.balance, account.currency)}"
     )
-    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("acct_type:"))
+async def stale_account_type_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """Отвечает на callback, если FSM-состояние потеряно (Redis / перезапуск)."""
+    await callback.answer("Сессия устарела. Нажми ➕ Добавить счёт и пройди шаги заново.", show_alert=True)
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith("acct_edit_name:"))
