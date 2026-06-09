@@ -3,6 +3,8 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Worker: без healthcheck, без uvicorn. RUN_MODE=worker задаётся в Variables.
 startCommand = ""
+# Явно отключаем healthcheck (worker не отдаёт HTTP)
+healthcheckPath = ""
+healthcheckTimeout = 0
 restartPolicyType = "ON_FAILURE"
