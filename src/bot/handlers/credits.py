@@ -75,7 +75,7 @@ async def credit_terms_rate(message: Message, state: FSMContext) -> None:
     except InvalidOperation:
         await message.answer("Введи число, например: 19.9")
         return
-    await state.update_data(credit_rate=rate)
+    await state.update_data(credit_rate=str(rate))
     await state.set_state(CreditTermsStates.waiting_min_payment)
     await message.answer("Минимальный платёж? (0 если не знаешь)")
 
@@ -103,7 +103,7 @@ async def credit_terms_min_payment(message: Message, state: FSMContext, session:
         account_id=account.id,
         product_type=product,
         calc_method=credit_repo.default_calc_method(product),
-        interest_rate_annual=data["credit_rate"],
+        interest_rate_annual=Decimal(str(data["credit_rate"])),
         min_payment=min_pay if min_pay > 0 else None,
         terms_confirmed=True,
     )

@@ -121,7 +121,8 @@ async def process_account_balance(message: Message, state: FSMContext) -> None:
     except InvalidOperation:
         await message.answer("Не понял сумму. Введи число, например: 50000")
         return
-    await state.update_data(balance=balance)
+    # FSM в Redis хранит JSON — Decimal не сериализуется
+    await state.update_data(balance=str(balance))
     await state.set_state(AddAccountStates.account_type)
     await message.answer("Тип счёта?", reply_markup=account_type_keyboard())
 
