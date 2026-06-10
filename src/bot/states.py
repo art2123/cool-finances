@@ -41,3 +41,6 @@ class EditTransactionStates(StatesGroup):
     waiting_currency = State()
     waiting_settlement = State()
     waiting_counter_amount = State()
+    waiting_date = State()
+    waiting_merchant = State()
+    waiting_description = State()

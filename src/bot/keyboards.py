@@ -153,12 +153,12 @@ def account_edit_keyboard(account_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def categories_keyboard(categories: list[Category]) -> InlineKeyboardMarkup:
+def categories_keyboard(categories: list[Category], prefix: str = "category") -> InlineKeyboardMarkup:
     rows = []
     row: list[InlineKeyboardButton] = []
     for cat in categories:
         label = f"{cat.icon or ''} {cat.name}".strip()
-        row.append(InlineKeyboardButton(text=label, callback_data=f"category:{cat.slug}"))
+        row.append(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{cat.slug}"))
         if len(row) == 2:
             rows.append(row)
             row = []
@@ -235,24 +235,49 @@ def transaction_list_keyboard(
 
 def transaction_edit_keyboard(tx_id: int, tx_type: str, *, foreign_expense: bool = False) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="💰 Сумма", callback_data=f"tx_edit:{tx_id}:amount")],
-        [InlineKeyboardButton(text="💱 Валюта", callback_data=f"tx_edit:{tx_id}:currency")],
-        [InlineKeyboardButton(text="💳 Счёт", callback_data=f"tx_edit:{tx_id}:account")],
+        [InlineKeyboardButton(text="📅 Дата", callback_data=f"tx_edit:{tx_id}:date")],
     ]
-    if foreign_expense:
-        rows.append(
-            [InlineKeyboardButton(text="💳 Списание с карты", callback_data=f"tx_edit:{tx_id}:settlement")]
-        )
+
     if tx_type == "conversion":
         rows.extend(
             [
-                [InlineKeyboardButton(text="💳 Счёт зачисления", callback_data=f"tx_edit:{tx_id}:counter_account")],
+                [InlineKeyboardButton(text="💰 Сумма списания", callback_data=f"tx_edit:{tx_id}:amount")],
+                [InlineKeyboardButton(text="💳 Счёт списания", callback_data=f"tx_edit:{tx_id}:account")],
                 [InlineKeyboardButton(text="💰 Сумма зачисления", callback_data=f"tx_edit:{tx_id}:counter_amount")],
+                [InlineKeyboardButton(text="💳 Счёт зачисления", callback_data=f"tx_edit:{tx_id}:counter_account")],
             ]
         )
     elif tx_type == "transfer":
-        rows.append(
-            [InlineKeyboardButton(text="💳 Счёт назначения", callback_data=f"tx_edit:{tx_id}:counter_account")]
+        rows.extend(
+            [
+                [InlineKeyboardButton(text="💰 Сумма", callback_data=f"tx_edit:{tx_id}:amount")],
+                [InlineKeyboardButton(text="💳 Счёт откуда", callback_data=f"tx_edit:{tx_id}:account")],
+                [InlineKeyboardButton(text="💳 Счёт куда", callback_data=f"tx_edit:{tx_id}:counter_account")],
+            ]
         )
-    rows.append([InlineKeyboardButton(text="◀️ К списку", callback_data="tx_back_list")])
+    else:
+        amount_label = "💰 Сумма покупки" if tx_type == "expense" else "💰 Сумма"
+        rows.extend(
+            [
+                [InlineKeyboardButton(text=amount_label, callback_data=f"tx_edit:{tx_id}:amount")],
+                [InlineKeyboardButton(text="💱 Валюта", callback_data=f"tx_edit:{tx_id}:currency")],
+                [InlineKeyboardButton(text="💳 Счёт", callback_data=f"tx_edit:{tx_id}:account")],
+            ]
+        )
+        if foreign_expense:
+            rows.append(
+                [InlineKeyboardButton(text="💳 Списание с карты", callback_data=f"tx_edit:{tx_id}:settlement")]
+            )
+        if tx_type == "expense":
+            rows.append(
+                [InlineKeyboardButton(text="🏷 Категория", callback_data=f"tx_edit:{tx_id}:category")]
+            )
+
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="📝 Описание", callback_data=f"tx_edit:{tx_id}:merchant")],
+            [InlineKeyboardButton(text="💬 Комментарий", callback_data=f"tx_edit:{tx_id}:description")],
+            [InlineKeyboardButton(text="◀️ К списку", callback_data="tx_back_list")],
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -18,6 +18,25 @@ class TransactionType(str, enum.Enum):
     FX_FEE = "fx_fee"
 
 
+TRANSACTION_TYPE_LABELS = {
+    TransactionType.EXPENSE: "расходы",
+    TransactionType.INCOME: "доходы",
+    TransactionType.TRANSFER: "перевод",
+    TransactionType.CONVERSION: "конвертация",
+    TransactionType.DEBT_PAYMENT: "погашение долга",
+    TransactionType.FX_FEE: "комиссия",
+}
+
+
+def transaction_type_label(tx_type: TransactionType | str) -> str:
+    if isinstance(tx_type, TransactionType):
+        return TRANSACTION_TYPE_LABELS.get(tx_type, tx_type.value)
+    try:
+        return TRANSACTION_TYPE_LABELS.get(TransactionType(tx_type), tx_type)
+    except ValueError:
+        return tx_type
+
+
 class TransactionStatus(str, enum.Enum):
     DRAFT = "draft"
     CONFIRMED = "confirmed"

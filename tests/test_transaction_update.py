@@ -166,3 +166,36 @@ def test_update_foreign_expense_sets_settlement_balance() -> None:
         assert reloaded.counter_amount == Decimal("1700")
 
     asyncio.run(_run_with_session(scenario))
+
+
+def test_update_expense_metadata_without_balance_change() -> None:
+    async def scenario(session: AsyncSession) -> None:
+        from datetime import date
+
+        user = await _create_user(session, 400)
+        account = await account_repo.create_account(
+            session,
+            user_id=user.id,
+            name="Card",
+            currency="RSD",
+            balance=Decimal("1000"),
+            account_type=AccountType.DEBIT,
+        )
+        tx, account = await record_expense(session, user.id, account.id, Decimal("200"), "RSD")
+        assert account.balance == Decimal("800")
+
+        updated = await update_transaction(
+            session,
+            user.id,
+            tx.id,
+            transaction_date=date(2026, 6, 9),
+            merchant="Магазин",
+            description="300 динар продукты",
+        )
+
+        assert updated.transaction_date == date(2026, 6, 9)
+        assert updated.merchant == "Магазин"
+        assert updated.description == "300 динар продукты"
+        assert account.balance == Decimal("800")
+
+    asyncio.run(_run_with_session(scenario))

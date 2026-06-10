@@ -16,7 +16,7 @@ from src.bot.keyboards import (
     currency_keyboard,
 )
 from src.bot.states import ExpenseStates
-from src.domain.enums import TransactionType, UserIntent
+from src.domain.enums import TransactionType, UserIntent, transaction_type_label
 from src.parsers.intent_classifier import classify_intent
 from src.parsers.text_expense_parser import parse_expense_text
 from src.repositories import account_repo, category_repo, user_repo
@@ -35,10 +35,13 @@ router = Router()
 
 
 def format_draft_preview(draft: dict, account_name: str = None) -> str:
+    tx_type = draft.get("transaction_type", "expense")
+    is_income = tx_type == TransactionType.INCOME or tx_type == "income"
     lines = ["*Черновик операции:*"]
-    lines.append(f"Тип: {draft.get('transaction_type', 'expense')}")
+    lines.append(f"Тип: {transaction_type_label(tx_type)}")
     if draft.get("amount"):
-        lines.append(f"Покупка: {draft['amount']} {draft.get('currency', '?')}")
+        amount_label = "Сумма" if is_income else "Покупка"
+        lines.append(f"{amount_label}: {draft['amount']} {draft.get('currency', '?')}")
     if draft.get("settlement_amount"):
         cur = draft.get("settlement_currency") or "?"
         lines.append(f"Списание с карты: {draft['settlement_amount']} {cur}")
@@ -74,7 +77,13 @@ async def _prompt_account_selection(
         keyboard = expense_accounts_keyboard(filtered, None, show_all=True)
 
     await state.set_state(ExpenseStates.waiting_account)
-    await message.answer("С какого счёта?", reply_markup=keyboard)
+    if draft.transaction_type == TransactionType.INCOME:
+        prompt = "На какой счёт зачислить?"
+    else:
+        prompt = "С какого счёта списать?"
+        if picker_currency:
+            prompt += f" (валюта: {picker_currency})"
+    await message.answer(prompt, reply_markup=keyboard)
 
 
 async def start_expense_flow(message: Message, state: FSMContext, session: AsyncSession, text: str) -> None:

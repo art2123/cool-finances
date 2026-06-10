@@ -249,10 +249,31 @@ async def update_transaction(
     counter_account_id: int | None = None,
     counter_amount: Decimal | None = None,
     counter_currency: str | None = None,
+    transaction_date: date | None = None,
+    merchant: str | None = None,
+    description: str | None = None,
+    category_id: int | None = None,
 ) -> Transaction:
     tx = await transaction_repo.get_transaction_by_id(session, user_id, tx_id)
     if not tx or tx.status != TransactionStatus.CONFIRMED:
         raise ValueError("Transaction not found or not editable")
+
+    financial_update = any(
+        field is not None
+        for field in (amount, currency, account_id, counter_account_id, counter_amount, counter_currency)
+    )
+    if not financial_update:
+        if transaction_date is not None:
+            tx.transaction_date = transaction_date
+        if merchant is not None:
+            tx.merchant = merchant or None
+        if description is not None:
+            tx.description = description or None
+        if category_id is not None:
+            tx.category_id = category_id
+        await session.flush()
+        await session.refresh(tx)
+        return tx
 
     target_account_id = account_id or tx.account_id
     target_counter_account_id = counter_account_id if counter_account_id is not None else tx.counter_account_id
@@ -314,7 +335,18 @@ async def update_transaction(
         tx.currency = new_account.currency.upper()
 
     apply_transaction_balances(tx, new_account, new_counter)
+
+    if transaction_date is not None:
+        tx.transaction_date = transaction_date
+    if merchant is not None:
+        tx.merchant = merchant or None
+    if description is not None:
+        tx.description = description or None
+    if category_id is not None:
+        tx.category_id = category_id
+
     await session.flush()
+    await session.refresh(tx)
     return tx
 
 

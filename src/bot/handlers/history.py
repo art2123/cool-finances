@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
@@ -10,17 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards import (
     accounts_keyboard,
+    categories_keyboard,
     currency_keyboard,
     expense_accounts_keyboard,
     transaction_edit_keyboard,
     transaction_list_keyboard,
 )
 from src.bot.states import EditTransactionStates
-from src.domain.enums import TransactionType
+from src.domain.enums import TransactionType, transaction_type_label
 from src.models.transaction import Transaction
-from src.repositories import account_repo, transaction_repo, user_repo
+from src.repositories import account_repo, category_repo, transaction_repo, user_repo
 from src.services import balance_service
-from src.services.transaction_service import update_transaction
+from src.services.transaction_service import resolve_category_id, update_transaction
 
 router = Router()
 
@@ -64,11 +66,48 @@ def format_tx_line(tx: Transaction) -> str:
     return f"#{tx.id} · {balance_service.format_money(tx.amount, tx.currency)} · {title} · {account_name} · {day}"
 
 
+def _parse_date_input(text: str) -> date:
+    cleaned = text.strip()
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%d.%m"):
+        try:
+            parsed = datetime.strptime(cleaned, fmt).date()
+            if fmt == "%d.%m":
+                parsed = parsed.replace(year=date.today().year)
+            return parsed
+        except ValueError:
+            continue
+    raise ValueError("Неверный формат даты. Пример: 10.06.2026")
+
+
+def _edit_keyboard_for(tx: Transaction) -> object:
+    foreign_expense = tx.type == TransactionType.EXPENSE and tx.counter_amount is not None
+    return transaction_edit_keyboard(tx.id, tx.type.value, foreign_expense=foreign_expense)
+
+
+async def _finish_edit(
+    event: Message | CallbackQuery,
+    updated: Transaction,
+    state: FSMContext,
+    *,
+    answer_text: str | None = None,
+) -> None:
+    await _reset_edit_state_keep_history(state)
+    data = await state.get_data()
+    text = format_tx_card(updated)
+    keyboard = _edit_keyboard_for(updated)
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+        await event.answer(answer_text or "Сохранено")
+    else:
+        await event.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
 def format_tx_card(tx: Transaction) -> str:
-    lines = [f"*Операция #{tx.id}*", f"Тип: {tx.type.value}", f"Дата: {tx.transaction_date.strftime('%d.%m.%Y')}"]
-    title = _tx_title(tx)
-    if title:
-        lines.append(f"Описание: {title}")
+    lines = [
+        f"*Операция #{tx.id}*",
+        f"Тип: {transaction_type_label(tx.type)}",
+        f"Дата: {tx.transaction_date.strftime('%d.%m.%Y')}",
+    ]
 
     if tx.type == TransactionType.EXPENSE:
         lines.append(f"Покупка: {balance_service.format_money(tx.amount, tx.currency)}")
@@ -102,11 +141,11 @@ def format_tx_card(tx: Transaction) -> str:
         if tx.account:
             lines.append(f"Счёт: {tx.account.name}")
 
+    if tx.merchant:
+        lines.append(f"Описание: {tx.merchant}")
     if tx.category:
         lines.append(f"Категория: {tx.category.name}")
-    if tx.merchant and tx.merchant != title:
-        lines.append(f"Место: {tx.merchant}")
-    if tx.description and tx.description not in (tx.merchant, title):
+    if tx.description:
         lines.append(f"Комментарий: {tx.description}")
 
     return "\n".join(lines)
@@ -128,9 +167,8 @@ async def _edit_history_message(
     account_id: int | None = None,
 ) -> None:
     await state.update_data(history_account_id=account_id)
-    foreign_expense = tx.type == TransactionType.EXPENSE and tx.counter_amount is not None
     text = format_tx_card(tx)
-    keyboard = transaction_edit_keyboard(tx.id, tx.type.value, foreign_expense=foreign_expense)
+    keyboard = _edit_keyboard_for(tx)
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     else:
@@ -275,6 +313,23 @@ async def cb_tx_edit(callback: CallbackQuery, state: FSMContext, session: AsyncS
             "Выбери счёт:",
             reply_markup=accounts_keyboard(remaining, prefix=f"tx_pick_counter:{tx_id}"),
         )
+    elif field == "date":
+        await state.set_state(EditTransactionStates.waiting_date)
+        await callback.message.answer("Новая дата? Формат: 10.06.2026")
+    elif field == "merchant":
+        await state.set_state(EditTransactionStates.waiting_merchant)
+        current = tx.merchant or "—"
+        await callback.message.answer(f"Текущее описание: {current}\n\nВведи новое (или «-» чтобы очистить):")
+    elif field == "description":
+        await state.set_state(EditTransactionStates.waiting_description)
+        current = tx.description or "—"
+        await callback.message.answer(f"Текущий комментарий: {current}\n\nВведи новый (или «-» чтобы очистить):")
+    elif field == "category":
+        categories = await category_repo.list_categories(session)
+        await callback.message.answer(
+            "Выбери категорию:",
+            reply_markup=categories_keyboard(categories, prefix=f"tx_cat:{tx_id}"),
+        )
     await callback.answer()
 
 
@@ -346,10 +401,21 @@ async def process_edit_amount(message: Message, state: FSMContext, session: Asyn
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    await _reset_edit_state_keep_history(state)
-    await message.answer(format_tx_card(updated), parse_mode="Markdown", reply_markup=transaction_edit_keyboard(
-        updated.id, updated.type.value, foreign_expense=updated.type == TransactionType.EXPENSE and updated.counter_amount is not None
-    ))
+    await _finish_edit(message, updated, state)
+
+
+@router.callback_query(F.data.startswith("tx_cat:"))
+async def cb_tx_pick_category(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    _, tx_id_str, slug = callback.data.split(":")
+    tx_id = int(tx_id_str)
+    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    category_id = await resolve_category_id(session, slug)
+    try:
+        updated = await update_transaction(session, user.id, tx_id, category_id=category_id)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await _finish_edit(callback, updated, state, answer_text="Категория обновлена")
 
 
 @router.callback_query(EditTransactionStates.waiting_currency, F.data.startswith("currency:"))
@@ -375,15 +441,7 @@ async def process_edit_currency(callback: CallbackQuery, state: FSMContext, sess
         await callback.message.answer(str(exc))
         await callback.answer()
         return
-    await _reset_edit_state_keep_history(state)
-    await callback.message.edit_text(
-        format_tx_card(updated),
-        parse_mode="Markdown",
-        reply_markup=transaction_edit_keyboard(
-            updated.id, updated.type.value, foreign_expense=updated.type == TransactionType.EXPENSE and updated.counter_amount is not None
-        ),
-    )
-    await callback.answer("Валюта обновлена")
+    await _finish_edit(callback, updated, state, answer_text="Валюта обновлена")
 
 
 @router.message(EditTransactionStates.waiting_settlement)
@@ -406,14 +464,55 @@ async def process_edit_settlement(message: Message, state: FSMContext, session: 
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    await _reset_edit_state_keep_history(state)
-    await message.answer(
-        format_tx_card(updated),
-        parse_mode="Markdown",
-        reply_markup=transaction_edit_keyboard(
-            updated.id, updated.type.value, foreign_expense=updated.type == TransactionType.EXPENSE and updated.counter_amount is not None
-        ),
-    )
+    await _finish_edit(message, updated, state)
+
+
+@router.message(EditTransactionStates.waiting_date)
+async def process_edit_date(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        new_date = _parse_date_input(message.text or "")
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    data = await state.get_data()
+    tx_id = data["edit_tx_id"]
+    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
+    try:
+        updated = await update_transaction(session, user.id, tx_id, transaction_date=new_date)
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await _finish_edit(message, updated, state)
+
+
+@router.message(EditTransactionStates.waiting_merchant)
+async def process_edit_merchant(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    merchant = None if text in {"-", "—", ""} else text
+    data = await state.get_data()
+    tx_id = data["edit_tx_id"]
+    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
+    try:
+        updated = await update_transaction(session, user.id, tx_id, merchant=merchant)
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await _finish_edit(message, updated, state)
+
+
+@router.message(EditTransactionStates.waiting_description)
+async def process_edit_description(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    description = None if text in {"-", "—", ""} else text
+    data = await state.get_data()
+    tx_id = data["edit_tx_id"]
+    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
+    try:
+        updated = await update_transaction(session, user.id, tx_id, description=description)
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    await _finish_edit(message, updated, state)
 
 
 @router.message(EditTransactionStates.waiting_counter_amount)
@@ -431,11 +530,4 @@ async def process_edit_counter_amount(message: Message, state: FSMContext, sessi
     except ValueError as exc:
         await message.answer(str(exc))
         return
-    await _reset_edit_state_keep_history(state)
-    await message.answer(
-        format_tx_card(updated),
-        parse_mode="Markdown",
-        reply_markup=transaction_edit_keyboard(
-            updated.id, updated.type.value, foreign_expense=updated.type == TransactionType.EXPENSE and updated.counter_amount is not None
-        ),
-    )
+    await _finish_edit(message, updated, state)
