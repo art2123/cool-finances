@@ -11,7 +11,6 @@ from src.bot.keyboards import (
 )
 from src.repositories import account_repo, category_repo, user_repo
 from src.services import balance_service
-from src.services.transaction_service import undo_last_transaction
 
 router = Router()
 
@@ -24,6 +23,10 @@ async def _handle_more_menu_button(message: Message, state: FSMContext, session:
         from src.bot.handlers.reports import cmd_report
 
         await cmd_report(message)
+    elif text == "📜 История":
+        from src.bot.handlers.history import show_transaction_history
+
+        await show_transaction_history(message, session, state)
     elif text == "🔄 Конвертация":
         from src.bot.handlers.conversions import cmd_conversion
 
@@ -68,6 +71,7 @@ async def handle_main_menu_button(message: Message, state: FSMContext, session: 
 
     if text in {
         "📊 Отчёт",
+        "📜 История",
         "🔄 Конвертация",
         "📉 Долги",
         "📈 Проценты",
@@ -86,8 +90,6 @@ async def handle_main_menu_button(message: Message, state: FSMContext, session: 
         from src.bot.handlers.accounts import show_accounts_hub
 
         await show_accounts_hub(message, session)
-    elif text in {"↩️ Отмена", "⤴️ Отмена"}:
-        await cmd_undo(message, session)
     elif text == "➕ Счёт":
         from src.bot.handlers.accounts import cmd_add_account
 
@@ -146,9 +148,9 @@ async def cmd_start(message: Message, session: AsyncSession) -> None:
 async def cmd_help(message: Message) -> None:
     await message.answer(
         "*Главное меню:*\n"
-        "💰 Баланс · 💳 Счета · 💸 Перевод · 📋 Ещё · ↩️ Отмена\n\n"
+        "💰 Баланс · 💳 Счета · 💸 Перевод · 📋 Ещё\n\n"
         "*Меню «Ещё»:*\n"
-        "📊 Отчёт · 🔄 Конвертация · 📉 Долги · 📈 Проценты\n"
+        "📊 Отчёт · 📜 История · 🔄 Конвертация · 📉 Долги · 📈 Проценты\n"
         "🔮 Прогноз · 🔔 Напоминания · 🎯 Цели · ❓ Помощь\n\n"
         "*Счета:*\n"
         "💳 Счета — список, добавление и редактирование (название, валюта, баланс, тип)\n\n"
@@ -181,17 +183,3 @@ async def cmd_balance(message: Message, session: AsyncSession) -> None:
     accounts = await account_repo.list_accounts(session, user.id)
     text = "*Баланс*\n\n" + balance_service.format_balance_report(accounts)
     await message.answer(text, parse_mode="Markdown")
-
-
-@router.message(Command("undo"))
-async def cmd_undo(message: Message, session: AsyncSession) -> None:
-    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
-    result = await undo_last_transaction(session, user.id)
-    if not result:
-        await message.answer("Нет операций для отмены.")
-        return
-    tx, account = result
-    await message.answer(
-        f"Отменил операцию #{tx.id}.\n"
-        f"Баланс {account.name}: {balance_service.format_money(account.balance, account.currency)}"
-    )

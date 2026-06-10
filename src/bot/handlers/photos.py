@@ -4,8 +4,11 @@ from decimal import Decimal
 
 import httpx
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.bot.handlers.expenses import start_expense_flow
 from src.core.config import get_settings
 from src.domain.currencies import CURRENCY_PROMPT_CHOICES
 
@@ -13,7 +16,10 @@ router = Router()
 
 
 @router.message(F.photo)
-async def handle_photo(message: Message) -> None:
+async def handle_photo(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if await state.get_state():
+        return
+
     settings = get_settings()
     await message.answer("Смотрю изображение...")
 
@@ -63,7 +69,5 @@ async def handle_photo(message: Message) -> None:
     conf = float(data.get("confidence", 0.5))
     suggest = f"{merchant} {amount} {currency}"
 
-    await message.answer(
-        f"Распознал ({conf:.0%}):\n{suggest}\n\n"
-        f"Напиши для записи: «{suggest}»"
-    )
+    await message.answer(f"Распознал ({conf:.0%}):\n{suggest}")
+    await start_expense_flow(message, state, session, suggest)

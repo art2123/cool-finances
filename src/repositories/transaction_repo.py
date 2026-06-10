@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.domain.enums import TransactionStatus, TransactionType
 from src.models.transaction import Transaction
@@ -22,6 +23,78 @@ async def create_transaction(session: AsyncSession, **kwargs) -> Transaction:
     session.add(tx)
     await session.flush()
     return tx
+
+
+async def list_recent_transactions(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+    account_id: int | None = None,
+) -> list[Transaction]:
+    query = (
+        select(Transaction)
+        .options(
+            selectinload(Transaction.account),
+            selectinload(Transaction.counter_account),
+            selectinload(Transaction.category),
+        )
+        .where(
+            Transaction.user_id == user_id,
+            Transaction.status == TransactionStatus.CONFIRMED,
+            Transaction.reversed_by_id.is_(None),
+        )
+        .order_by(Transaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    if account_id is not None:
+        query = query.where(
+            (Transaction.account_id == account_id) | (Transaction.counter_account_id == account_id)
+        )
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+async def count_recent_transactions(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    account_id: int | None = None,
+) -> int:
+    query = (
+        select(func.count())
+        .select_from(Transaction)
+        .where(
+            Transaction.user_id == user_id,
+            Transaction.status == TransactionStatus.CONFIRMED,
+            Transaction.reversed_by_id.is_(None),
+        )
+    )
+    if account_id is not None:
+        query = query.where(
+            (Transaction.account_id == account_id) | (Transaction.counter_account_id == account_id)
+        )
+    result = await session.execute(query)
+    return result.scalar_one()
+
+
+async def get_transaction_by_id(
+    session: AsyncSession,
+    user_id: int,
+    tx_id: int,
+) -> Transaction | None:
+    result = await session.execute(
+        select(Transaction)
+        .options(
+            selectinload(Transaction.account),
+            selectinload(Transaction.counter_account),
+            selectinload(Transaction.category),
+        )
+        .where(Transaction.user_id == user_id, Transaction.id == tx_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_last_transaction(session: AsyncSession, user_id: int) -> Transaction | None:

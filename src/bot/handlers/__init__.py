@@ -9,6 +9,7 @@ from src.bot.handlers import (
     expenses,
     family,
     goals,
+    history,
     photos,
     reminders,
     reports,
@@ -28,6 +29,7 @@ def setup_routers() -> Router:
     router.include_router(conversions.router)
     router.include_router(goals.router)
     router.include_router(reports.router)
+    router.include_router(history.router)
     router.include_router(photos.router)
     router.include_router(expenses.router)  # last: free-text fallback
     return router

@@ -34,3 +34,10 @@ class TransferStates(StatesGroup):
 class ConversionStates(StatesGroup):
     waiting_amount_out = State()
     waiting_amount_in = State()
+
+
+class EditTransactionStates(StatesGroup):
+    waiting_amount = State()
+    waiting_currency = State()
+    waiting_settlement = State()
+    waiting_counter_amount = State()

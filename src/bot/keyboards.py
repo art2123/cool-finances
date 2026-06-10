@@ -11,8 +11,6 @@ MAIN_MENU_BUTTON_TEXTS = (
     "💳 Счета",
     "💸 Перевод",
     "📋 Ещё",
-    "↩️ Отмена",
-    "⤴️ Отмена",
     # legacy
     "📊 Отчёт",
     "➕ Счёт",
@@ -27,6 +25,7 @@ MAIN_MENU_BUTTON_TEXTS = (
 
 MORE_MENU_BUTTON_TEXTS = (
     "📊 Отчёт",
+    "📜 История",
     "🔄 Конвертация",
     "📉 Долги",
     "📈 Проценты",
@@ -65,6 +64,7 @@ ACCOUNT_TYPE_ICONS = {
 
 ASSET_ACCOUNT_TYPES = frozenset({AccountType.DEBIT, AccountType.CASH, AccountType.SAVINGS})
 DEBT_ACCOUNT_TYPES = frozenset({AccountType.CREDIT, AccountType.DEBT})
+SPENDABLE_ACCOUNT_TYPES = frozenset({AccountType.DEBIT, AccountType.CASH, AccountType.CREDIT, AccountType.SAVINGS})
 
 
 def currency_keyboard(callback_prefix: str = "currency") -> InlineKeyboardMarkup:
@@ -97,6 +97,30 @@ def accounts_keyboard(accounts: list[Account], prefix: str = "pick_account") -> 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def expense_accounts_keyboard(
+    accounts: list[Account],
+    currency: str | None,
+    *,
+    show_all: bool = False,
+    prefix: str = "pick_account",
+) -> InlineKeyboardMarkup:
+    spendable = [a for a in accounts if a.account_type in SPENDABLE_ACCOUNT_TYPES]
+    if show_all or not currency:
+        return accounts_keyboard(spendable, prefix)
+
+    cur = currency.upper()
+    matching = [a for a in spendable if a.currency.upper() == cur]
+    other = [a for a in spendable if a.currency.upper() != cur]
+
+    rows = [
+        [InlineKeyboardButton(text=f"{a.name} ({a.balance} {a.currency})", callback_data=f"{prefix}:{a.id}")]
+        for a in matching
+    ]
+    if other or not matching:
+        rows.append([InlineKeyboardButton(text="Другой счёт", callback_data=f"{prefix}:all")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def accounts_hub_keyboard(accounts: list[Account]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
@@ -122,6 +146,7 @@ def account_edit_keyboard(account_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="💰 Баланс", callback_data=f"acct_edit_balance:{account_id}"),
                 InlineKeyboardButton(text="🏷 Тип", callback_data=f"acct_edit_type:{account_id}"),
             ],
+            [InlineKeyboardButton(text="📜 Операции", callback_data=f"acct_tx_history:{account_id}")],
             [InlineKeyboardButton(text="🗑 Деактивировать", callback_data=f"acct_deactivate:{account_id}")],
             [InlineKeyboardButton(text="◀️ К списку", callback_data="acct_back")],
         ]
@@ -158,7 +183,6 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="💳 Счета")],
             [KeyboardButton(text="💸 Перевод"), KeyboardButton(text="📋 Ещё")],
-            [KeyboardButton(text="↩️ Отмена")],
         ],
         resize_keyboard=True,
     )
@@ -167,11 +191,68 @@ def main_menu_keyboard() -> ReplyKeyboardMarkup:
 def more_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="🔄 Конвертация")],
-            [KeyboardButton(text="📉 Долги"), KeyboardButton(text="📈 Проценты")],
-            [KeyboardButton(text="🔮 Прогноз"), KeyboardButton(text="🔔 Напоминания")],
-            [KeyboardButton(text="🎯 Цели"), KeyboardButton(text="❓ Помощь")],
-            [KeyboardButton(text="◀️ Назад")],
+            [KeyboardButton(text="📊 Отчёт"), KeyboardButton(text="📜 История")],
+            [KeyboardButton(text="🔄 Конвертация"), KeyboardButton(text="📉 Долги")],
+            [KeyboardButton(text="📈 Проценты"), KeyboardButton(text="🔮 Прогноз")],
+            [KeyboardButton(text="🔔 Напоминания"), KeyboardButton(text="🎯 Цели")],
+            [KeyboardButton(text="❓ Помощь"), KeyboardButton(text="◀️ Назад")],
         ],
         resize_keyboard=True,
     )
+
+
+def transaction_list_keyboard(
+    transactions: list,
+    *,
+    page: int,
+    total_count: int,
+    page_size: int,
+    account_id: int | None = None,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=label, callback_data=f"tx_open:{tx.id}")]
+        for tx, label in transactions
+    ]
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="◀️",
+                callback_data=f"tx_page:{page - 1}:{account_id or ''}",
+            )
+        )
+    if (page + 1) * page_size < total_count:
+        nav.append(
+            InlineKeyboardButton(
+                text="▶️",
+                callback_data=f"tx_page:{page + 1}:{account_id or ''}",
+            )
+        )
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def transaction_edit_keyboard(tx_id: int, tx_type: str, *, foreign_expense: bool = False) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="💰 Сумма", callback_data=f"tx_edit:{tx_id}:amount")],
+        [InlineKeyboardButton(text="💱 Валюта", callback_data=f"tx_edit:{tx_id}:currency")],
+        [InlineKeyboardButton(text="💳 Счёт", callback_data=f"tx_edit:{tx_id}:account")],
+    ]
+    if foreign_expense:
+        rows.append(
+            [InlineKeyboardButton(text="💳 Списание с карты", callback_data=f"tx_edit:{tx_id}:settlement")]
+        )
+    if tx_type == "conversion":
+        rows.extend(
+            [
+                [InlineKeyboardButton(text="💳 Счёт зачисления", callback_data=f"tx_edit:{tx_id}:counter_account")],
+                [InlineKeyboardButton(text="💰 Сумма зачисления", callback_data=f"tx_edit:{tx_id}:counter_amount")],
+            ]
+        )
+    elif tx_type == "transfer":
+        rows.append(
+            [InlineKeyboardButton(text="💳 Счёт назначения", callback_data=f"tx_edit:{tx_id}:counter_account")]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ К списку", callback_data="tx_back_list")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)

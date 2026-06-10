@@ -46,3 +46,5 @@ class Transaction(Base):
     user: Mapped["User"] = relationship(back_populates="transactions", foreign_keys=[user_id])
     actor: Mapped[Optional["User"]] = relationship(foreign_keys=[actor_user_id])
     account: Mapped["Account"] = relationship(back_populates="transactions", foreign_keys=[account_id])
+    counter_account: Mapped[Optional["Account"]] = relationship(foreign_keys=[counter_account_id])
+    category: Mapped[Optional["Category"]] = relationship(foreign_keys=[category_id])

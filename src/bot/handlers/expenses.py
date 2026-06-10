@@ -10,9 +10,9 @@ from src.bot.handlers.goals import handle_emergency_fund_text
 from src.bot.handlers.reminders import handle_reminder_intent
 from src.bot.keyboards import (
     ALL_MENU_BUTTON_TEXTS,
-    accounts_keyboard,
     categories_keyboard,
     confirm_keyboard,
+    expense_accounts_keyboard,
     currency_keyboard,
 )
 from src.bot.states import ExpenseStates
@@ -22,8 +22,9 @@ from src.parsers.text_expense_parser import parse_expense_text
 from src.repositories import account_repo, category_repo, user_repo
 from src.services import balance_service
 from src.services.transaction_service import (
+    account_picker_currency,
+    filter_spendable_accounts,
     draft_missing_fields,
-    pick_default_account,
     record_expense,
     record_income,
     resolve_category_id,
@@ -50,20 +51,41 @@ def format_draft_preview(draft: dict, account_name: str = None) -> str:
     return "\n".join(lines)
 
 
+async def _prompt_account_selection(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    draft: ExpenseDraft,
+    user_id: int,
+    *,
+    show_all: bool = False,
+) -> None:
+    accounts = await account_repo.list_accounts(session, user_id)
+    spendable = filter_spendable_accounts(accounts)
+    picker_currency = account_picker_currency(draft)
+    if picker_currency and not show_all:
+        keyboard = expense_accounts_keyboard(accounts, picker_currency)
+    else:
+        filtered = spendable
+        if picker_currency and show_all:
+            filtered = [a for a in spendable if a.currency.upper() != picker_currency.upper()]
+            if not filtered:
+                filtered = spendable
+        keyboard = expense_accounts_keyboard(filtered, None, show_all=True)
+
+    await state.set_state(ExpenseStates.waiting_account)
+    await message.answer("С какого счёта?", reply_markup=keyboard)
+
+
 async def start_expense_flow(message: Message, state: FSMContext, session: AsyncSession, text: str) -> None:
     user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
     await category_repo.ensure_system_categories(session)
 
     draft = await parse_expense_text(text)
-    account = await pick_default_account(session, user.id, draft.currency, draft.account_name)
 
     payload = draft.model_dump(mode="json")
-    if account:
-        payload["account_id"] = account.id
-        payload["account_name"] = account.name
-
     await state.update_data(draft=payload, telegram_id=message.from_user.id)
-    missing = draft_missing_fields(draft, account)
+    missing = draft_missing_fields(draft, None, account_id=payload.get("account_id"))
 
     if "amount" in missing:
         await state.set_state(ExpenseStates.waiting_amount)
@@ -74,10 +96,11 @@ async def start_expense_flow(message: Message, state: FSMContext, session: Async
         await message.answer("В какой валюте?", reply_markup=currency_keyboard())
         return
     if "account" in missing:
-        accounts = await account_repo.list_accounts(session, user.id)
-        await state.set_state(ExpenseStates.waiting_account)
-        await message.answer("С какого счёта?", reply_markup=accounts_keyboard(accounts))
+        await _prompt_account_selection(message, state, session, draft, user.id)
         return
+    account = None
+    if payload.get("account_id"):
+        account = await account_repo.get_account_by_id(session, user.id, payload["account_id"])
     if "settlement" in missing and account:
         await state.set_state(ExpenseStates.waiting_settlement)
         await message.answer(
@@ -153,13 +176,21 @@ async def process_draft_currency(callback: CallbackQuery, state: FSMContext, ses
 
 @router.callback_query(ExpenseStates.waiting_account, F.data.startswith("pick_account:"))
 async def process_draft_account(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    account_id = int(callback.data.split(":")[1])
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
-    account = await account_repo.get_account_by_id(session, user.id, account_id)
     data = await state.get_data()
     draft = data["draft"]
+    if callback.data.endswith(":all"):
+        await callback.answer()
+        await _prompt_account_selection(callback.message, state, session, ExpenseDraft.model_validate(draft), user.id, show_all=True)
+        return
+
+    account_id = int(callback.data.split(":")[1])
+    account = await account_repo.get_account_by_id(session, user.id, account_id)
+    if not account:
+        await callback.answer("Счёт не найден", show_alert=True)
+        return
     draft["account_id"] = account_id
-    draft["account_name"] = account.name if account else None
+    draft["account_name"] = account.name
     await state.update_data(draft=draft)
     await callback.message.edit_text(f"Счёт: {account.name}")
     await callback.answer()
@@ -203,20 +234,17 @@ async def _continue_draft(message: Message, state: FSMContext, session: AsyncSes
     draft = ExpenseDraft.model_validate(draft_data)
 
     account = None
-    if draft_data.get("account_id"):
-        account = await account_repo.get_account_by_id(session, user.id, draft_data["account_id"])
-    else:
-        account = await pick_default_account(session, user.id, draft.currency)
+    account_id = draft_data.get("account_id")
+    if account_id:
+        account = await account_repo.get_account_by_id(session, user.id, account_id)
 
-    missing = draft_missing_fields(draft, account)
+    missing = draft_missing_fields(draft, account, account_id=account_id)
     if "currency" in missing:
         await state.set_state(ExpenseStates.waiting_currency)
         await message.answer("В какой валюте?", reply_markup=currency_keyboard())
         return
     if "account" in missing:
-        accounts = await account_repo.list_accounts(session, user.id)
-        await state.set_state(ExpenseStates.waiting_account)
-        await message.answer("С какого счёта?", reply_markup=accounts_keyboard(accounts))
+        await _prompt_account_selection(message, state, session, draft, user.id)
         return
     if "settlement" in missing and account:
         await state.set_state(ExpenseStates.waiting_settlement)

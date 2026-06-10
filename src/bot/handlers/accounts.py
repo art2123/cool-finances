@@ -21,6 +21,7 @@ from src.bot.states import AddAccountStates, EditAccountStates
 from src.domain.enums import AccountType
 from src.repositories import account_repo, user_repo
 from src.services import balance_service
+from src.bot.handlers.history import show_transaction_history
 
 router = Router()
 
@@ -91,6 +92,13 @@ async def cb_acct_back(callback: CallbackQuery, session: AsyncSession) -> None:
 async def cb_acct_open(callback: CallbackQuery, session: AsyncSession) -> None:
     account_id = int(callback.data.split(":")[1])
     await _show_account_edit(callback, session, account_id)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("acct_tx_history:"))
+async def cb_account_tx_history(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    account_id = int(callback.data.split(":")[1])
+    await show_transaction_history(callback, session, state, account_id=account_id)
     await callback.answer()
 
 
