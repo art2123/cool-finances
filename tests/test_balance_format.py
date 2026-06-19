@@ -31,7 +31,10 @@ def test_format_accounts_grouped_by_currency_and_type() -> None:
     assert "Kaspi Яна" in text
     assert "Тинькофф Яна" in text
     assert "Kaspi Артём" in text
-    assert "(дебет)" not in text
+    assert "[дб]" in text
+    assert "[к]" in text
+    assert "💳 [дб] Kaspi Яна" in text
+    assert "🔴 [к] Тинькофф Яна" in text
 
 
 def test_format_balance_report_includes_summary() -> None:

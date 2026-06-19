@@ -54,9 +54,17 @@ ACCOUNT_TYPE_SHORT = {
     AccountType.SAVINGS: "накопления",
 }
 
+ACCOUNT_TYPE_TAGS = {
+    AccountType.DEBIT: "[дб]",
+    AccountType.CREDIT: "[к]",
+    AccountType.CASH: "[нал]",
+    AccountType.DEBT: "[д]",
+    AccountType.SAVINGS: "[нак]",
+}
+
 ACCOUNT_TYPE_ICONS = {
     AccountType.DEBIT: "💳",
-    AccountType.CREDIT: "💳",
+    AccountType.CREDIT: "🔴",
     AccountType.CASH: "💵",
     AccountType.DEBT: "📉",
     AccountType.SAVINGS: "🐷",
@@ -65,6 +73,16 @@ ACCOUNT_TYPE_ICONS = {
 ASSET_ACCOUNT_TYPES = frozenset({AccountType.DEBIT, AccountType.CASH, AccountType.SAVINGS})
 DEBT_ACCOUNT_TYPES = frozenset({AccountType.CREDIT, AccountType.DEBT})
 SPENDABLE_ACCOUNT_TYPES = frozenset({AccountType.DEBIT, AccountType.CASH, AccountType.CREDIT, AccountType.SAVINGS})
+
+
+def format_account_label(account: Account) -> str:
+    icon = ACCOUNT_TYPE_ICONS.get(account.account_type, "•")
+    tag = ACCOUNT_TYPE_TAGS.get(account.account_type, "")
+    return f"{icon} {tag} {account.name}".strip()
+
+
+def format_account_button(account: Account) -> str:
+    return f"{format_account_label(account)} ({account.balance} {account.currency})"
 
 
 def currency_keyboard(callback_prefix: str = "currency") -> InlineKeyboardMarkup:
@@ -91,7 +109,7 @@ def account_type_keyboard(callback_prefix: str = "acct_type") -> InlineKeyboardM
 
 def accounts_keyboard(accounts: list[Account], prefix: str = "pick_account") -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=f"{a.name} ({a.balance} {a.currency})", callback_data=f"{prefix}:{a.id}")]
+        [InlineKeyboardButton(text=format_account_button(a), callback_data=f"{prefix}:{a.id}")]
         for a in accounts
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -113,7 +131,7 @@ def expense_accounts_keyboard(
     other = [a for a in spendable if a.currency.upper() != cur]
 
     rows = [
-        [InlineKeyboardButton(text=f"{a.name} ({a.balance} {a.currency})", callback_data=f"{prefix}:{a.id}")]
+        [InlineKeyboardButton(text=format_account_button(a), callback_data=f"{prefix}:{a.id}")]
         for a in matching
     ]
     if other or not matching:
@@ -125,7 +143,7 @@ def accounts_hub_keyboard(accounts: list[Account]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for account in accounts:
-        row.append(InlineKeyboardButton(text=account.name, callback_data=f"acct_open:{account.id}"))
+        row.append(InlineKeyboardButton(text=format_account_label(account), callback_data=f"acct_open:{account.id}"))
         if len(row) == 2:
             rows.append(row)
             row = []

@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.keyboards import accounts_keyboard
+from src.bot.keyboards import accounts_keyboard, format_account_label
 from src.bot.states import TransferStates
 from src.repositories import account_repo, fx_repo, user_repo
 from src.services import balance_service
@@ -56,7 +56,7 @@ async def xfer_from(callback: CallbackQuery, state: FSMContext, session: AsyncSe
     accounts = [a for a in await account_repo.list_accounts(session, user.id) if a.id != from_id]
     await state.update_data(xfer_from=from_id)
     await callback.message.edit_text(
-        f"С: {from_acc.name} ({from_acc.currency})\n\n"
+        f"С: {format_account_label(from_acc)} ({from_acc.currency})\n\n"
         "На какой счёт? (другая валюта → 🔄 Конвертация)"
     )
     await callback.message.answer("Выбери:", reply_markup=accounts_keyboard(accounts, "xfer_to"))

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from src.bot.keyboards import expense_accounts_keyboard
+from src.bot.keyboards import expense_accounts_keyboard, format_account_button, format_account_label
 from src.domain.enums import AccountType
 from src.domain.schemas import ExpenseDraft
 from src.models.account import Account
@@ -40,10 +40,23 @@ def test_expense_accounts_keyboard_groups_matching_currency() -> None:
     keyboard = expense_accounts_keyboard(accounts, "RSD")
     rows = keyboard.inline_keyboard
 
-    assert [button.text for button in rows[0]] == ["Visa RSD (1000 RSD)"]
-    assert [button.text for button in rows[1]] == ["Cash RSD (1000 RSD)"]
+    assert [button.text for button in rows[0]] == [format_account_button(accounts[0])]
+    assert [button.text for button in rows[1]] == [format_account_button(accounts[1])]
     assert rows[2][0].text == "Другой счёт"
     assert rows[2][0].callback_data == "pick_account:all"
+
+
+def test_format_account_label_includes_icon_and_tag() -> None:
+    account = _account(1, "Visa RSD", "RSD", AccountType.DEBIT)
+    assert format_account_label(account) == "💳 [дб] Visa RSD"
+
+    credit = _account(2, "Тинькофф", "RUB", AccountType.CREDIT)
+    assert format_account_label(credit) == "🔴 [к] Тинькофф"
+
+
+def test_format_account_button_includes_balance() -> None:
+    account = _account(1, "Visa RSD", "RSD", AccountType.DEBIT)
+    assert format_account_button(account) == "💳 [дб] Visa RSD (1000 RSD)"
 
 
 def test_draft_missing_fields_uses_account_id_hint() -> None:

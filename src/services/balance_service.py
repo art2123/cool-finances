@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.keyboards import ACCOUNT_TYPE_ICONS, ASSET_ACCOUNT_TYPES, DEBT_ACCOUNT_TYPES
+from src.bot.keyboards import ASSET_ACCOUNT_TYPES, DEBT_ACCOUNT_TYPES, format_account_label
 from src.domain.currencies import CURRENCIES
 from src.domain.enums import AccountType
 from src.models.account import Account
@@ -30,8 +30,7 @@ def _currency_order(currencies: set[str] | dict) -> list[str]:
 
 
 def _format_account_line(account: Account) -> str:
-    icon = ACCOUNT_TYPE_ICONS.get(account.account_type, "•")
-    return f"  {icon} {account.name} — {format_amount(account.balance)}"
+    return f"  {format_account_label(account)} — {format_amount(account.balance)}"
 
 
 def format_accounts_grouped(accounts: list[Account], *, show_summary: bool = False) -> str:
