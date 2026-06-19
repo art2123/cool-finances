@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
@@ -11,7 +12,7 @@ from src.bot.handlers.reminders import handle_reminder_intent
 from src.bot.keyboards import (
     ALL_MENU_BUTTON_TEXTS,
     categories_keyboard,
-    confirm_keyboard,
+    draft_confirm_keyboard,
     expense_accounts_keyboard,
     currency_keyboard,
 )
@@ -39,6 +40,11 @@ def format_draft_preview(draft: dict, account_name: str = None) -> str:
     is_income = tx_type == TransactionType.INCOME or tx_type == "income"
     lines = ["*Черновик операции:*"]
     lines.append(f"Тип: {transaction_type_label(tx_type)}")
+    if draft.get("transaction_date"):
+        if isinstance(draft["transaction_date"], str):
+            lines.append(f"Дата: {draft['transaction_date']}")
+        else:
+            lines.append(f"Дата: {draft['transaction_date'].strftime('%d.%m.%Y')}")
     if draft.get("amount"):
         amount_label = "Сумма" if is_income else "Покупка"
         lines.append(f"{amount_label}: {draft['amount']} {draft.get('currency', '?')}")
@@ -51,7 +57,51 @@ def format_draft_preview(draft: dict, account_name: str = None) -> str:
         lines.append(f"Категория: {draft['category_slug']}")
     if account_name:
         lines.append(f"Счёт: {account_name}")
+    if draft.get("description"):
+        lines.append(f"Комментарий: {draft['description']}")
     return "\n".join(lines)
+
+
+def _parse_date_input(text: str) -> date:
+    cleaned = text.strip()
+    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%d.%m"):
+        try:
+            parsed = datetime.strptime(cleaned, fmt).date()
+            if fmt == "%d.%m":
+                parsed = parsed.replace(year=date.today().year)
+            return parsed
+        except ValueError:
+            continue
+    raise ValueError("Неверный формат даты. Пример: 10.06.2026")
+
+
+def _draft_foreign_expense(draft: dict, account) -> bool:
+    tx_type = draft.get("transaction_type", "expense")
+    if tx_type in ("income", TransactionType.INCOME):
+        return False
+    if draft.get("settlement_amount"):
+        return True
+    if account and draft.get("currency"):
+        return draft["currency"].upper() != account.currency.upper()
+    return False
+
+
+async def _show_draft_confirm(
+    message: Message,
+    state: FSMContext,
+    draft_data: dict,
+    *,
+    account=None,
+) -> None:
+    account_name = draft_data.get("account_name")
+    if account:
+        account_name = account.name
+    await state.set_state(ExpenseStates.confirm)
+    await message.answer(
+        format_draft_preview(draft_data, account_name),
+        reply_markup=draft_confirm_keyboard(draft_data, foreign_expense=_draft_foreign_expense(draft_data, account)),
+        parse_mode="Markdown",
+    )
 
 
 async def _prompt_account_selection(
@@ -123,12 +173,7 @@ async def start_expense_flow(message: Message, state: FSMContext, session: Async
         await message.answer("Выбери категорию:", reply_markup=categories_keyboard(categories))
         return
 
-    await state.set_state(ExpenseStates.confirm)
-    await message.answer(
-        format_draft_preview(payload, account.name if account else None),
-        reply_markup=confirm_keyboard(),
-        parse_mode="Markdown",
-    )
+    await _show_draft_confirm(message, state, payload, account=account)
 
 
 @router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(ALL_MENU_BUTTON_TEXTS))
@@ -177,6 +222,13 @@ async def process_draft_currency(callback: CallbackQuery, state: FSMContext, ses
     data = await state.get_data()
     draft = data["draft"]
     draft["currency"] = currency
+    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    account = None
+    if draft.get("account_id"):
+        account = await account_repo.get_account_by_id(session, user.id, draft["account_id"])
+    if account and account.currency.upper() == currency.upper():
+        draft.pop("settlement_amount", None)
+        draft.pop("settlement_currency", None)
     await state.update_data(draft=draft)
     await callback.message.edit_text(f"Валюта: {currency}")
     await callback.answer()
@@ -273,12 +325,81 @@ async def _continue_draft(message: Message, state: FSMContext, session: AsyncSes
         draft_data["account_name"] = account.name
         await state.update_data(draft=draft_data)
 
-    await state.set_state(ExpenseStates.confirm)
-    await message.answer(
-        format_draft_preview(draft_data, draft_data.get("account_name")),
-        reply_markup=confirm_keyboard(),
-        parse_mode="Markdown",
-    )
+    await _show_draft_confirm(message, state, draft_data, account=account)
+
+
+@router.callback_query(ExpenseStates.confirm, F.data.startswith("draft:edit:"))
+async def draft_edit_field(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    field = callback.data.split(":")[2]
+    data = await state.get_data()
+    draft = data["draft"]
+    user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+    expense_draft = ExpenseDraft.model_validate(draft)
+
+    if field == "amount":
+        await state.set_state(ExpenseStates.waiting_amount)
+        await callback.message.answer("Новая сумма?")
+    elif field == "currency":
+        await state.set_state(ExpenseStates.waiting_currency)
+        await callback.message.answer("Выбери валюту:", reply_markup=currency_keyboard())
+    elif field == "account":
+        await _prompt_account_selection(callback.message, state, session, expense_draft, user.id)
+    elif field == "settlement":
+        await state.set_state(ExpenseStates.waiting_settlement)
+        await callback.message.answer("Сколько списалось с карты?")
+    elif field == "category":
+        categories = await category_repo.list_categories(session)
+        await state.set_state(ExpenseStates.waiting_category)
+        await callback.message.answer("Выбери категорию:", reply_markup=categories_keyboard(categories))
+    elif field == "merchant":
+        await state.set_state(ExpenseStates.waiting_merchant)
+        current = draft.get("merchant") or "—"
+        await callback.message.answer(f"Текущее описание: {current}\n\nВведи новое (или «-» чтобы очистить):")
+    elif field == "description":
+        await state.set_state(ExpenseStates.waiting_description)
+        current = draft.get("description") or "—"
+        await callback.message.answer(f"Текущий комментарий: {current}\n\nВведи новый (или «-» чтобы очистить):")
+    elif field == "date":
+        await state.set_state(ExpenseStates.waiting_date)
+        current = draft.get("transaction_date") or date.today().strftime("%d.%m.%Y")
+        await callback.message.answer(f"Текущая дата: {current}\n\nНовая дата? Формат: 10.06.2026")
+    await callback.answer()
+
+
+@router.message(ExpenseStates.waiting_merchant)
+async def process_draft_merchant(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    merchant = None if text in {"-", "—", ""} else text
+    data = await state.get_data()
+    draft = data["draft"]
+    draft["merchant"] = merchant
+    await state.update_data(draft=draft)
+    await _continue_draft(message, state, session)
+
+
+@router.message(ExpenseStates.waiting_description)
+async def process_draft_description(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    text = (message.text or "").strip()
+    description = None if text in {"-", "—", ""} else text
+    data = await state.get_data()
+    draft = data["draft"]
+    draft["description"] = description
+    await state.update_data(draft=draft)
+    await _continue_draft(message, state, session)
+
+
+@router.message(ExpenseStates.waiting_date)
+async def process_draft_date(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        new_date = _parse_date_input(message.text or "")
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    data = await state.get_data()
+    draft = data["draft"]
+    draft["transaction_date"] = new_date.isoformat()
+    await state.update_data(draft=draft)
+    await _continue_draft(message, state, session)
 
 
 @router.callback_query(ExpenseStates.confirm, F.data == "draft:save")
@@ -291,12 +412,17 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
     account_id = draft["account_id"]
     category_id = await resolve_category_id(session, draft.get("category_slug"))
     tx_type = draft.get("transaction_type", "expense")
+    transaction_date = None
+    if draft.get("transaction_date"):
+        raw_date = draft["transaction_date"]
+        transaction_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
 
     if tx_type == "income":
         tx, account = await record_income(
             session, user.id, account_id, amount, currency,
             actor_user_id=actor.id,
             description=draft.get("description"),
+            transaction_date=transaction_date,
             source_message_id=callback.message.message_id,
             raw_input=draft.get("raw_input"),
         )
@@ -314,6 +440,7 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
             category_id=category_id,
             merchant=draft.get("merchant"),
             description=draft.get("description"),
+            transaction_date=transaction_date,
             source_message_id=callback.message.message_id,
             raw_input=draft.get("raw_input"),
         )

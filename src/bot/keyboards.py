@@ -156,14 +156,12 @@ def accounts_hub_keyboard(accounts: list[Account]) -> InlineKeyboardMarkup:
 def account_edit_keyboard(account_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Баланс", callback_data=f"acct_edit_balance:{account_id}")],
             [
                 InlineKeyboardButton(text="✏️ Название", callback_data=f"acct_edit_name:{account_id}"),
                 InlineKeyboardButton(text="💱 Валюта", callback_data=f"acct_edit_currency:{account_id}"),
             ],
-            [
-                InlineKeyboardButton(text="💰 Баланс", callback_data=f"acct_edit_balance:{account_id}"),
-                InlineKeyboardButton(text="🏷 Тип", callback_data=f"acct_edit_type:{account_id}"),
-            ],
+            [InlineKeyboardButton(text="🏷 Тип", callback_data=f"acct_edit_type:{account_id}")],
             [InlineKeyboardButton(text="📜 Операции", callback_data=f"acct_tx_history:{account_id}")],
             [InlineKeyboardButton(text="🗑 Деактивировать", callback_data=f"acct_deactivate:{account_id}")],
             [InlineKeyboardButton(text="◀️ К списку", callback_data="acct_back")],
@@ -194,6 +192,34 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def draft_confirm_keyboard(draft: dict, *, foreign_expense: bool = False) -> InlineKeyboardMarkup:
+    tx_type = draft.get("transaction_type", "expense")
+    is_expense = tx_type != "income"
+    amount_label = "💰 Сумма покупки" if is_expense else "💰 Сумма"
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=amount_label, callback_data="draft:edit:amount")],
+        [InlineKeyboardButton(text="💱 Валюта", callback_data="draft:edit:currency")],
+        [InlineKeyboardButton(text="💳 Счёт", callback_data="draft:edit:account")],
+    ]
+    if foreign_expense:
+        rows.append([InlineKeyboardButton(text="💳 Списание с карты", callback_data="draft:edit:settlement")])
+    if is_expense:
+        rows.append([InlineKeyboardButton(text="🏷 Категория", callback_data="draft:edit:category")])
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="📝 Описание", callback_data="draft:edit:merchant")],
+            [InlineKeyboardButton(text="💬 Комментарий", callback_data="draft:edit:description")],
+            [InlineKeyboardButton(text="📅 Дата", callback_data="draft:edit:date")],
+            [
+                InlineKeyboardButton(text="✅ Сохранить", callback_data="draft:save"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="draft:cancel"),
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def main_menu_keyboard() -> ReplyKeyboardMarkup:

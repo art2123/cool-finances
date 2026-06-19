@@ -19,6 +19,9 @@ class ExpenseStates(StatesGroup):
     waiting_account = State()
     waiting_settlement = State()
     waiting_category = State()
+    waiting_merchant = State()
+    waiting_description = State()
+    waiting_date = State()
     confirm = State()
 
 
