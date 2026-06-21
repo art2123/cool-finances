@@ -27,22 +27,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def _apply_schema_patches(conn) -> None:
-    await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS counter_amount NUMERIC(18, 2)"))
-    await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS counter_currency TEXT"))
-    await conn.execute(
-        text("ALTER TYPE transaction_type ADD VALUE IF NOT EXISTS 'conversion'")
-    )
-    await conn.execute(
-        text("ALTER TABLE users ADD COLUMN IF NOT EXISTS family_owner_id INTEGER REFERENCES users(id)")
-    )
-    await conn.execute(
-        text(
-            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id)"
-        )
-    )
-    await conn.execute(
-        text(
-            """
+    patches = [
+        "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS counter_amount NUMERIC(18, 2)",
+        "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS counter_currency TEXT",
+        "ALTER TYPE transaction_type ADD VALUE IF NOT EXISTS 'conversion'",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS family_owner_id INTEGER REFERENCES users(id)",
+        "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS actor_user_id INTEGER REFERENCES users(id)",
+        """
             CREATE TABLE IF NOT EXISTS family_invites (
                 id SERIAL PRIMARY KEY,
                 owner_user_id INTEGER NOT NULL REFERENCES users(id),
@@ -51,9 +42,13 @@ async def _apply_schema_patches(conn) -> None:
                 created_at TIMESTAMPTZ DEFAULT now(),
                 UNIQUE (owner_user_id, invitee_telegram_id)
             )
-            """
-        )
-    )
+        """,
+    ]
+    for patch in patches:
+        try:
+            await conn.execute(text(patch))
+        except Exception:
+            continue
 
 
 async def init_db() -> None:

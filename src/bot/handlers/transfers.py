@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
@@ -7,10 +8,13 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards import accounts_keyboard, format_account_label
+from src.bot.parsing import parse_amount
 from src.bot.states import TransferStates
 from src.repositories import account_repo, fx_repo, user_repo
 from src.services import balance_service
 from src.services.transaction_service import record_transfer
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -49,10 +53,15 @@ async def cmd_set_rate(message: Message, session: AsyncSession) -> None:
 async def xfer_from(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     if not data.get("transfer_flow"):
+        await callback.answer("Сессия перевода устарела. Нажми 💸 Перевод снова.", show_alert=True)
         return
     from_id = int(callback.data.split(":")[1])
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
     from_acc = await account_repo.get_account_by_id(session, user.id, from_id)
+    if not from_acc:
+        await callback.answer("Счёт не найден. Начни перевод заново.", show_alert=True)
+        await state.clear()
+        return
     accounts = [a for a in await account_repo.list_accounts(session, user.id) if a.id != from_id]
     await state.update_data(xfer_from=from_id)
     await callback.message.edit_text(
@@ -67,11 +76,16 @@ async def xfer_from(callback: CallbackQuery, state: FSMContext, session: AsyncSe
 async def xfer_to(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     if not data.get("transfer_flow"):
+        await callback.answer("Сессия перевода устарела. Нажми 💸 Перевод снова.", show_alert=True)
         return
     to_id = int(callback.data.split(":")[1])
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
     from_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, to_id)
+    if not from_acc or not to_acc:
+        await callback.answer("Счёт не найден. Начни перевод заново.", show_alert=True)
+        await state.clear()
+        return
 
     if from_acc.currency != to_acc.currency:
         await callback.message.edit_text(
@@ -91,23 +105,43 @@ async def xfer_to(callback: CallbackQuery, state: FSMContext, session: AsyncSess
 @router.message(TransferStates.waiting_amount)
 async def xfer_amount(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
-        amount = Decimal(message.text.replace(" ", "").replace(",", "."))
-    except InvalidOperation:
+        amount = parse_amount(message.text)
+    except (InvalidOperation, AttributeError):
         await message.answer("Введи число")
         return
 
     data = await state.get_data()
+    missing = [key for key in ("xfer_from", "xfer_to") if key not in data]
+    if missing:
+        await state.clear()
+        await message.answer("Данные перевода потерялись. Начни заново: 💸 Перевод")
+        return
+
     telegram_id = data.get("telegram_id", message.from_user.id)
     user, actor = await user_repo.resolve_data_and_actor(session, telegram_id=telegram_id)
     from_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, data["xfer_to"])
+    if not from_acc or not to_acc:
+        await state.clear()
+        await message.answer("Один из счетов не найден. Начни заново: 💸 Перевод")
+        return
 
-    await record_transfer(
-        session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency, actor_user_id=actor.id
-    )
+    try:
+        await record_transfer(
+            session, user.id, from_acc.id, to_acc.id, amount, from_acc.currency, actor_user_id=actor.id
+        )
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    except Exception:
+        logger.exception("Failed to record transfer for user %s", user.id)
+        await message.answer("Не удалось сохранить перевод. Попробуй ещё раз: 💸 Перевод")
+        return
+
     await state.clear()
     await message.answer(
         f"Перевод ✅ {amount} {from_acc.currency}\n"
         f"{from_acc.name}: {balance_service.format_money(from_acc.balance, from_acc.currency)}\n"
-        f"{to_acc.name}: {balance_service.format_money(to_acc.balance, to_acc.currency)}"
+        f"{to_acc.name}: {balance_service.format_money(to_acc.balance, to_acc.currency)}",
+        parse_mode=None,
     )

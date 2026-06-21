@@ -82,7 +82,13 @@ def format_account_label(account: Account) -> str:
 
 
 def format_account_button(account: Account) -> str:
-    return f"{format_account_label(account)} ({account.balance} {account.currency})"
+    label = format_account_label(account)
+    suffix = f" ({account.balance} {account.currency})"
+    text = f"{label}{suffix}"
+    if len(text) <= 64:
+        return text
+    max_label_len = max(4, 63 - len(suffix))
+    return f"{label[:max_label_len].rstrip()}…{suffix}"
 
 
 def currency_keyboard(callback_prefix: str = "currency") -> InlineKeyboardMarkup:

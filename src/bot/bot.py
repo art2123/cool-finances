@@ -67,6 +67,13 @@ def create_dispatcher(storage=None) -> Dispatcher:
                 await cb.answer("Не удалось выполнить действие. Попробуй ещё раз.", show_alert=True)
             except Exception:
                 logger.exception("Failed to answer callback after error")
+        elif update.message:
+            try:
+                await update.message.answer(
+                    "Что-то пошло не так. Попробуй ещё раз или начни заново через меню."
+                )
+            except Exception:
+                logger.exception("Failed to send error reply after handler error")
         logger.exception("Handler error: %s", event.exception)
         return True
 

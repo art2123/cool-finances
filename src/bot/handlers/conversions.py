@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
@@ -7,10 +8,13 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.bot.keyboards import accounts_keyboard
+from src.bot.parsing import parse_amount
 from src.bot.states import ConversionStates
 from src.repositories import account_repo, user_repo
 from src.services import balance_service
 from src.services.transaction_service import record_conversion
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -40,10 +44,15 @@ async def cmd_convert(message: Message, state: FSMContext, session: AsyncSession
 async def conv_from(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     if not data.get("conversion_flow"):
+        await callback.answer("Сессия конвертации устарела. Нажми 🔄 Конвертация снова.", show_alert=True)
         return
     from_id = int(callback.data.split(":")[1])
     user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
     from_acc = await account_repo.get_account_by_id(session, user.id, from_id)
+    if not from_acc:
+        await callback.answer("Счёт не найден. Начни конвертацию заново.", show_alert=True)
+        await state.clear()
+        return
     accounts = [
         a
         for a in await account_repo.list_accounts(session, user.id)
@@ -69,6 +78,7 @@ async def conv_from(callback: CallbackQuery, state: FSMContext, session: AsyncSe
 async def conv_to(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     if not data.get("conversion_flow"):
+        await callback.answer("Сессия конвертации устарела. Нажми 🔄 Конвертация снова.", show_alert=True)
         return
     to_id = int(callback.data.split(":")[1])
     await state.update_data(conv_to=to_id)
@@ -80,8 +90,8 @@ async def conv_to(callback: CallbackQuery, state: FSMContext, session: AsyncSess
 @router.message(ConversionStates.waiting_amount_out)
 async def conv_amount_out(message: Message, state: FSMContext) -> None:
     try:
-        amount = Decimal(message.text.replace(" ", "").replace(",", "."))
-    except InvalidOperation:
+        amount = parse_amount(message.text)
+    except (InvalidOperation, AttributeError):
         await message.answer("Введи число, например: 5000")
         return
     await state.update_data(conv_amount_out=str(amount))
@@ -92,25 +102,45 @@ async def conv_amount_out(message: Message, state: FSMContext) -> None:
 @router.message(ConversionStates.waiting_amount_in)
 async def conv_amount_in(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
-        amount_in = Decimal(message.text.replace(" ", "").replace(",", "."))
-    except InvalidOperation:
+        amount_in = parse_amount(message.text)
+    except (InvalidOperation, AttributeError):
         await message.answer("Введи число, например: 25000")
         return
 
     data = await state.get_data()
+    missing = [key for key in ("conv_amount_out", "conv_from", "conv_to") if key not in data]
+    if missing:
+        await state.clear()
+        await message.answer("Данные конвертации потерялись. Начни заново: 🔄 Конвертация")
+        return
+
     telegram_id = data.get("telegram_id", message.from_user.id)
     user, actor = await user_repo.resolve_data_and_actor(session, telegram_id=telegram_id)
     amount_out = Decimal(str(data["conv_amount_out"]))
     from_acc = await account_repo.get_account_by_id(session, user.id, data["conv_from"])
     to_acc = await account_repo.get_account_by_id(session, user.id, data["conv_to"])
+    if not from_acc or not to_acc:
+        await state.clear()
+        await message.answer("Один из счетов не найден. Начни заново: 🔄 Конвертация")
+        return
 
-    await record_conversion(
-        session, user.id, from_acc.id, to_acc.id, amount_out, amount_in, actor_user_id=actor.id
-    )
+    try:
+        await record_conversion(
+            session, user.id, from_acc.id, to_acc.id, amount_out, amount_in, actor_user_id=actor.id
+        )
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    except Exception:
+        logger.exception("Failed to record conversion for user %s", user.id)
+        await message.answer("Не удалось сохранить конвертацию. Попробуй ещё раз: 🔄 Конвертация")
+        return
+
     await state.clear()
     await message.answer(
         f"Конвертация ✅\n"
         f"−{balance_service.format_money(amount_out, from_acc.currency)} ({from_acc.name})\n"
         f"+{balance_service.format_money(amount_in, to_acc.currency)} ({to_acc.name})\n\n"
-        f"Это не трата и не доход — деньги просто сменили валюту/счёт."
+        f"Это не трата и не доход — деньги просто сменили валюту/счёт.",
+        parse_mode=None,
     )

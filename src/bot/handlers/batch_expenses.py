@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 
@@ -15,6 +16,8 @@ from src.repositories import account_repo, category_repo, user_repo
 from src.services import balance_service
 from src.services.category_learning import category_label, offer_remember_rule, save_learned_rule
 from src.services.transaction_service import filter_spendable_accounts, record_expense, resolve_category_id
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -160,36 +163,44 @@ async def batch_save(callback: CallbackQuery, state: FSMContext, session: AsyncS
 
     saved = 0
     account = None
-    for draft in drafts:
-        amount = Decimal(str(draft["amount"]))
-        currency = draft["currency"]
-        category_id = await resolve_category_id(session, draft.get("category_slug"))
-        transaction_date = None
-        if draft.get("transaction_date"):
-            raw_date = draft["transaction_date"]
-            transaction_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
+    try:
+        for draft in drafts:
+            amount = Decimal(str(draft["amount"]))
+            currency = draft["currency"]
+            category_id = await resolve_category_id(session, draft.get("category_slug"))
+            transaction_date = None
+            if draft.get("transaction_date"):
+                raw_date = draft["transaction_date"]
+                transaction_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
 
-        _, account = await record_expense(
-            session,
-            user.id,
-            account_id,
-            amount,
-            currency,
-            actor_user_id=actor.id,
-            category_id=category_id,
-            merchant=draft.get("merchant"),
-            transaction_date=transaction_date,
-            source_message_id=callback.message.message_id,
-            raw_input=raw_input,
-            source_type="photo",
-        )
-        saved += 1
+            _, account = await record_expense(
+                session,
+                user.id,
+                account_id,
+                amount,
+                currency,
+                actor_user_id=actor.id,
+                category_id=category_id,
+                merchant=draft.get("merchant"),
+                transaction_date=transaction_date,
+                source_message_id=callback.message.message_id,
+                raw_input=raw_input,
+                source_type="photo",
+            )
+            saved += 1
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    except Exception:
+        logger.exception("Failed to save batch expenses for user %s", user.id)
+        await callback.answer("Не удалось сохранить пакет. Попробуй ещё раз.", show_alert=True)
+        return
 
     await state.clear()
     balance_line = ""
     if account:
         balance_line = f"\nБаланс {account.name}: {balance_service.format_money(account.balance, account.currency)}"
-    await callback.message.edit_text(f"Записал {saved} операций ✅{balance_line}")
+    await callback.message.edit_text(f"Записал {saved} операций ✅{balance_line}", parse_mode=None)
     await callback.answer()
 
 

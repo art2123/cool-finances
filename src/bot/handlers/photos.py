@@ -33,6 +33,10 @@ async def _apply_merchant_categories(
 @router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if await state.get_state():
+        await message.answer(
+            "Сейчас идёт другой шаг. Заверши его или нажми ◀️ Назад в меню, "
+            "потом отправь фото снова."
+        )
         return
 
     await message.answer("Смотрю изображение...")

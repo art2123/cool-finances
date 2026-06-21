@@ -9,6 +9,7 @@ from src.bot.handlers import (
     credits,
     expenses,
     family,
+    fsm_fallback,
     goals,
     history,
     photos,
@@ -34,4 +35,5 @@ def setup_routers() -> Router:
     router.include_router(batch_expenses.router)
     router.include_router(photos.router)
     router.include_router(expenses.router)  # last: free-text fallback
+    router.include_router(fsm_fallback.router)  # catch-all for unhandled FSM input
     return router

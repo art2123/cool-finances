@@ -1,11 +1,15 @@
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+import logging
+
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.bot.parsing import parse_amount
 from src.bot.handlers.advisor import handle_classified_intent
 from src.bot.handlers.goals import handle_emergency_fund_text
 from src.bot.handlers.reminders import handle_reminder_intent
@@ -32,6 +36,8 @@ from src.services.transaction_service import (
     resolve_category_id,
 )
 from src.domain.schemas import ExpenseDraft
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -195,12 +201,11 @@ async def start_expense_from_draft(
     await _show_draft_confirm(message, state, payload, account=account)
 
 
-@router.message(F.text & ~F.text.startswith("/") & ~F.text.in_(ALL_MENU_BUTTON_TEXTS))
+@router.message(
+    F.text & ~F.text.startswith("/") & ~F.text.in_(ALL_MENU_BUTTON_TEXTS),
+    StateFilter(None),
+)
 async def handle_free_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    current = await state.get_state()
-    if current:
-        return
-
     if await handle_emergency_fund_text(message, session):
         return
     if await handle_reminder_intent(message, session):
@@ -224,8 +229,8 @@ async def handle_free_text(message: Message, state: FSMContext, session: AsyncSe
 @router.message(ExpenseStates.waiting_amount)
 async def process_amount(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
-        amount = Decimal(message.text.replace(" ", "").replace(",", "."))
-    except InvalidOperation:
+        amount = parse_amount(message.text)
+    except (InvalidOperation, AttributeError):
         await message.answer("Введи число, например: 200")
         return
     data = await state.get_data()
@@ -280,8 +285,8 @@ async def process_draft_account(callback: CallbackQuery, state: FSMContext, sess
 @router.message(ExpenseStates.waiting_settlement)
 async def process_settlement(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
-        amount = Decimal(message.text.replace(" ", "").replace(",", "."))
-    except InvalidOperation:
+        amount = parse_amount(message.text)
+    except (InvalidOperation, AttributeError):
         await message.answer("Введи число — сколько списалось с карты")
         return
     data = await state.get_data()
@@ -443,40 +448,56 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
         transaction_date = date.fromisoformat(raw_date) if isinstance(raw_date, str) else raw_date
 
     if tx_type == "income":
-        tx, account = await record_income(
-            session, user.id, account_id, amount, currency,
-            actor_user_id=actor.id,
-            description=draft.get("description"),
-            transaction_date=transaction_date,
-            source_message_id=callback.message.message_id,
-            raw_input=draft.get("raw_input"),
-        )
+        try:
+            tx, account = await record_income(
+                session, user.id, account_id, amount, currency,
+                actor_user_id=actor.id,
+                description=draft.get("description"),
+                transaction_date=transaction_date,
+                source_message_id=callback.message.message_id,
+                raw_input=draft.get("raw_input"),
+            )
+        except ValueError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        except Exception:
+            logger.exception("Failed to save income draft for user %s", user.id)
+            await callback.answer("Не удалось сохранить. Попробуй ещё раз.", show_alert=True)
+            return
     else:
         settlement = Decimal(str(draft["settlement_amount"])) if draft.get("settlement_amount") else None
-        tx, account = await record_expense(
-            session,
-            user.id,
-            account_id,
-            amount,
-            currency,
-            actor_user_id=actor.id,
-            settlement_amount=settlement,
-            settlement_currency=draft.get("settlement_currency"),
-            category_id=category_id,
-            merchant=draft.get("merchant"),
-            description=draft.get("description"),
-            transaction_date=transaction_date,
-            source_message_id=callback.message.message_id,
-            raw_input=draft.get("raw_input"),
-            source_type="photo" if data.get("from_photo") else "text",
-        )
+        try:
+            tx, account = await record_expense(
+                session,
+                user.id,
+                account_id,
+                amount,
+                currency,
+                actor_user_id=actor.id,
+                settlement_amount=settlement,
+                settlement_currency=draft.get("settlement_currency"),
+                category_id=category_id,
+                merchant=draft.get("merchant"),
+                description=draft.get("description"),
+                transaction_date=transaction_date,
+                source_message_id=callback.message.message_id,
+                raw_input=draft.get("raw_input"),
+                source_type="photo" if data.get("from_photo") else "text",
+            )
+        except ValueError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        except Exception:
+            logger.exception("Failed to save expense draft for user %s", user.id)
+            await callback.answer("Не удалось сохранить. Попробуй ещё раз.", show_alert=True)
+            return
 
     await state.clear()
     saved_line = f"Записал ✅ #{tx.id}"
     if tx.counter_amount:
         saved_line += f"\nВ отчёте: {tx.amount} {tx.currency}, с карты: {tx.counter_amount} {tx.counter_currency}"
     saved_line += f"\nБаланс {account.name}: {balance_service.format_money(account.balance, account.currency)}"
-    await callback.message.edit_text(saved_line)
+    await callback.message.edit_text(saved_line, parse_mode=None)
     await callback.answer()
 
 
