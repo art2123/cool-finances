@@ -22,6 +22,7 @@ from src.parsers.intent_classifier import classify_intent
 from src.parsers.text_expense_parser import parse_expense_text
 from src.repositories import account_repo, category_repo, user_repo
 from src.services import balance_service
+from src.services.category_learning import offer_remember_rule
 from src.services.transaction_service import (
     account_picker_currency,
     filter_spendable_accounts,
@@ -137,13 +138,31 @@ async def _prompt_account_selection(
 
 
 async def start_expense_flow(message: Message, state: FSMContext, session: AsyncSession, text: str) -> None:
+    draft = await parse_expense_text(text)
+    await start_expense_from_draft(message, state, session, draft)
+
+
+async def start_expense_from_draft(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    draft: ExpenseDraft,
+    *,
+    from_photo: bool = False,
+    raw_input: str | None = None,
+) -> None:
     user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
     await category_repo.ensure_system_categories(session)
 
-    draft = await parse_expense_text(text)
+    if raw_input:
+        draft.raw_input = raw_input
 
     payload = draft.model_dump(mode="json")
-    await state.update_data(draft=payload, telegram_id=message.from_user.id)
+    await state.update_data(
+        draft=payload,
+        telegram_id=message.from_user.id,
+        from_photo=from_photo,
+    )
     missing = draft_missing_fields(draft, None, account_id=payload.get("account_id"))
 
     if "amount" in missing:
@@ -280,10 +299,16 @@ async def process_draft_category(callback: CallbackQuery, state: FSMContext, ses
     slug = callback.data.split(":")[1]
     data = await state.get_data()
     draft = data["draft"]
+    old_slug = draft.get("category_slug")
     draft["category_slug"] = slug
     await state.update_data(draft=draft)
     await callback.message.edit_text(f"Категория: {slug}")
     await callback.answer()
+
+    if data.get("from_photo") and slug != old_slug and draft.get("merchant"):
+        user = await user_repo.get_or_create_user(session, telegram_id=callback.from_user.id)
+        await offer_remember_rule(callback.message, session, user.id, draft["merchant"], slug)
+
     await _continue_draft(callback.message, state, session)
 
 
@@ -443,6 +468,7 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
             transaction_date=transaction_date,
             source_message_id=callback.message.message_id,
             raw_input=draft.get("raw_input"),
+            source_type="photo" if data.get("from_photo") else "text",
         )
 
     await state.clear()

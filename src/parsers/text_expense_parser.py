@@ -14,7 +14,10 @@ from src.domain.schemas import ExpenseDraft
 
 CATEGORY_KEYWORDS = {
     "cafe": ["кофе", "кафе", "coffee", "латте", "капучино"],
-    "food": ["еда", "продукты", "супермаркет", "молоко", "хлеб", "обед"],
+    "food": [
+        "еда", "продукты", "супермаркет", "молоко", "хлеб", "обед",
+        "lidl", "maxi", "idea", "roda", "univerexport", "tempo", "dis",
+    ],
     "delivery": ["доставка", "glovo", "wolt", "борис"],
     "transport": ["такси", "бензин", "автобус", "uber", "bolt"],
     "subscriptions": ["netflix", "spotify", "подписка", "youtube"],

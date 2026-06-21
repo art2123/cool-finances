@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 from src.domain.enums import AccountType, TransactionType
 
 
+class ImageParseResult(BaseModel):
+    transactions: list["ExpenseDraft"] = Field(default_factory=list)
+    raw_json: Optional[str] = None
+
+
 class ExpenseDraft(BaseModel):
     amount: Optional[Decimal] = None
     currency: Optional[str] = None

@@ -1,18 +1,33 @@
-import base64
-import json
-from decimal import Decimal
+import logging
 
-import httpx
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.bot.handlers.expenses import start_expense_flow
-from src.core.config import get_settings
-from src.domain.currencies import CURRENCY_PROMPT_CHOICES
+from src.bot.handlers.batch_expenses import start_batch_expense_flow
+from src.bot.handlers.expenses import start_expense_from_draft
+from src.parsers.image_expense_parser import parse_image_transactions
+from src.repositories import category_repo, user_repo
+from src.services.merchant_categorizer import resolve_merchant_category
+
+logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+async def _apply_merchant_categories(
+    session: AsyncSession,
+    user_id: int,
+    result,
+) -> None:
+    for tx in result.transactions:
+        tx.category_slug = await resolve_merchant_category(
+            session,
+            user_id,
+            tx.merchant,
+            tx.category_slug,
+        )
 
 
 @router.message(F.photo)
@@ -20,54 +35,57 @@ async def handle_photo(message: Message, state: FSMContext, session: AsyncSessio
     if await state.get_state():
         return
 
-    settings = get_settings()
     await message.answer("Смотрю изображение...")
-
-    if not settings.openai_api_key:
-        await message.answer(
-            "OCR требует OPENAI_API_KEY в .env.\n"
-            "Пока напиши текстом: «кофе 200 динар»"
-        )
-        return
 
     photo = message.photo[-1]
     file = await message.bot.get_file(photo.file_id)
     downloaded = await message.bot.download_file(file.file_path)
     content = downloaded.read()
-    b64 = base64.b64encode(content).decode()
 
-    prompt = (
-        'Extract from receipt/screenshot. Return JSON: '
-        f'{{"amount": number, "currency": "{CURRENCY_PROMPT_CHOICES}", '
-        '"merchant": string, "confidence": 0-1}}'
-    )
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-            json={
-                "model": settings.openai_model,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                    ],
-                }],
-                "temperature": 0,
-            },
+    try:
+        result = await parse_image_transactions(content)
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    except Exception:
+        logger.exception("Image OCR failed")
+        await message.answer(
+            "Не удалось распознать изображение. Попробуй ещё раз или напиши текстом."
         )
-        response.raise_for_status()
-        raw = response.json()["choices"][0]["message"]["content"]
-        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        data = json.loads(raw)
+        return
 
-    amount = Decimal(str(data.get("amount", 0)))
-    currency = data.get("currency", "RSD")
-    merchant = data.get("merchant", "покупка")
-    conf = float(data.get("confidence", 0.5))
-    suggest = f"{merchant} {amount} {currency}"
+    if not result.transactions:
+        await message.answer(
+            "Не нашёл транзакций на изображении.\n"
+            "Попробуй другое фото или напиши текстом: «lidl 1500 динар»"
+        )
+        return
 
-    await message.answer(f"Распознал ({conf:.0%}):\n{suggest}")
-    await start_expense_flow(message, state, session, suggest)
+    user = await user_repo.get_or_create_user(session, telegram_id=message.from_user.id)
+    await category_repo.ensure_system_categories(session)
+    await _apply_merchant_categories(session, user.id, result)
+
+    if len(result.transactions) == 1:
+        tx = result.transactions[0]
+        conf = tx.confidence
+        preview = f"{tx.merchant} {tx.amount} {tx.currency}"
+        if tx.category_slug:
+            preview += f" ({tx.category_slug})"
+        await message.answer(f"Распознал ({conf:.0%}):\n{preview}")
+        await start_expense_from_draft(
+            message,
+            state,
+            session,
+            tx,
+            from_photo=True,
+            raw_input=result.raw_json,
+        )
+        return
+
+    await start_batch_expense_flow(
+        message,
+        state,
+        session,
+        result.transactions,
+        raw_json=result.raw_json,
+    )

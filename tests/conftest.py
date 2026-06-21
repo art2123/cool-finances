@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.core.database import Base
 from src.models.account import Account
+from src.models.category import Category
+from src.models.category_rule import CategoryRule
 from src.models.family_invite import FamilyInvite
 from src.models.transaction import Transaction
 from src.models.user import User
@@ -10,6 +12,8 @@ from src.models.user import User
 _TEST_TABLES = [
     User.__table__,
     FamilyInvite.__table__,
+    Category.__table__,
+    CategoryRule.__table__,
     Account.__table__,
     Transaction.__table__,
 ]

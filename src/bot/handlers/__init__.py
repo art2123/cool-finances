@@ -3,6 +3,7 @@ from aiogram import Router
 from src.bot.handlers import (
     accounts,
     advisor,
+    batch_expenses,
     common,
     conversions,
     credits,
@@ -30,6 +31,7 @@ def setup_routers() -> Router:
     router.include_router(goals.router)
     router.include_router(reports.router)
     router.include_router(history.router)
+    router.include_router(batch_expenses.router)
     router.include_router(photos.router)
     router.include_router(expenses.router)  # last: free-text fallback
     return router

@@ -80,6 +80,7 @@ async def record_expense(
     transaction_date: date | None = None,
     source_message_id: int | None = None,
     raw_input: str | None = None,
+    source_type: str = "text",
 ):
     account = await account_repo.get_account_by_id(session, user_id, account_id)
     if not account:
@@ -116,7 +117,7 @@ async def record_expense(
         description=description,
         transaction_date=transaction_date or date.today(),
         source_message_id=source_message_id,
-        source_type="text",
+        source_type=source_type,
         raw_input=raw_input,
     )
     apply_transaction_to_account(account, "expense", debit_amount)

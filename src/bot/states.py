@@ -13,6 +13,12 @@ class EditAccountStates(StatesGroup):
     waiting_balance = State()
 
 
+class BatchExpenseStates(StatesGroup):
+    waiting_account = State()
+    waiting_category_fix = State()
+    confirm = State()
+
+
 class ExpenseStates(StatesGroup):
     waiting_amount = State()
     waiting_currency = State()

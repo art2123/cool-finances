@@ -222,6 +222,21 @@ def draft_confirm_keyboard(draft: dict, *, foreign_expense: bool = False) -> Inl
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def batch_confirm_keyboard(count: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for idx in range(count):
+        rows.append(
+            [InlineKeyboardButton(text=f"✏️ #{idx + 1} категория", callback_data=f"batch:edit_cat:{idx}")]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(text=f"✅ Сохранить все ({count})", callback_data="batch:save"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="batch:cancel"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
